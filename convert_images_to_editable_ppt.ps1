@@ -1,15 +1,19 @@
 param(
     [string]$InputDir = ".\resource",
     [string]$OutputDir = ".\ppt_editable_output",
-    [string]$Placeholder = " ",
+    [ValidateSet("dual", "mimic", "guide")]
+    [string]$TemplateMode = "dual",
+    [string]$Placeholder = "文字",
     [int]$DarkThreshold = 132,
     [int]$ColoredThreshold = 168,
     [int]$LineGap = 6,
     [int]$VerticalGap = 1,
     [int]$MaxBoxes = 260,
     [string]$GuideColor = "#2563eb",
-    [double]$GuideWidth = 1.0,
+    [double]$GuideWidth = 0.0,
     [string]$FontFace = "Microsoft YaHei",
+    [switch]$NoSampledStyle,
+    [switch]$ReferenceSlides,
     [string]$SkillDir = "C:\Users\25296\.codex\plugins\cache\openai-primary-runtime\presentations\26.630.12135\skills\presentations"
 )
 
@@ -52,6 +56,7 @@ $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $Out
 $regionsJson = Join-Path $outputPath "text_regions.json"
 $detector = Join-Path $PSScriptRoot "tools\detect_text_regions.py"
 $builderSource = Join-Path $PSScriptRoot "tools\create_editable_text_pptx.mjs"
+$layerNamer = Join-Path $PSScriptRoot "tools\name_pptx_layers.py"
 $setupScript = Join-Path $SkillDir "container_tools\setup_artifact_tool_workspace.mjs"
 
 if (!(Test-Path $setupScript)) {
@@ -85,7 +90,19 @@ Copy-Item -Path $builderSource -Destination $builder -Force
     --placeholder $Placeholder `
     --guide-color $GuideColor `
     --guide-width $GuideWidth `
-    --font-face $FontFace
+    --font-face $FontFace `
+    --template-mode $TemplateMode `
+    --sampled-style $(if ($NoSampledStyle) { "false" } else { "true" }) `
+    --reference-slides $(if ($ReferenceSlides) { "true" } else { "false" })
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+& $python $layerNamer `
+    --regions $regionsJson `
+    --output-dir $outputPath `
+    --template-mode $TemplateMode `
+    --reference-slides $(if ($ReferenceSlides) { "true" } else { "false" })
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

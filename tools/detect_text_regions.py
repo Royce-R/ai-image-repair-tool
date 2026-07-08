@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from collections import deque
 from pathlib import Path
 
@@ -148,6 +149,54 @@ def box_height(box: dict[str, float]) -> float:
     return box["bottom"] - box["top"]
 
 
+def clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def clamp_box(
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+    *,
+    image_width: int,
+    image_height: int,
+) -> tuple[float, float, float, float]:
+    return (
+        clamp(left, 0.0, float(image_width)),
+        clamp(top, 0.0, float(image_height)),
+        clamp(right, 0.0, float(image_width)),
+        clamp(bottom, 0.0, float(image_height)),
+    )
+
+
+def rgb_to_hex(rgb: np.ndarray | tuple[int, int, int]) -> str:
+    red, green, blue = [int(round(float(part))) for part in rgb[:3]]
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def sample_median_rgb(pixels: np.ndarray, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    if pixels.size == 0:
+        return fallback
+    median = np.median(pixels[:, :3].astype(np.float32), axis=0)
+    return tuple(int(round(float(part))) for part in median[:3])
+
+
+def color_luma(rgb: tuple[int, int, int]) -> float:
+    red, green, blue = rgb
+    return 0.299 * red + 0.587 * green + 0.114 * blue
+
+
+def hex_to_rgb(value: str, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    text = str(value or "").lstrip("#")
+    if len(text) != 6:
+        return fallback
+    try:
+        return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+    except ValueError:
+        return fallback
+
+
 def is_probable_text_box(
     box: dict[str, float],
     *,
@@ -182,6 +231,78 @@ def is_probable_text_box(
         return False
 
     return True
+
+
+def split_box_by_column_gaps(
+    box: dict[str, float],
+    ink_mask: np.ndarray,
+) -> list[dict[str, float]]:
+    height = box_height(box)
+    width = box_width(box)
+    if width < max(80.0, height * 4.0):
+        return [box]
+
+    x0 = int(max(0, np.floor(box["inkLeft"])))
+    x1 = int(min(ink_mask.shape[1], np.ceil(box["inkRight"])))
+    y0 = int(max(0, np.floor(box["inkTop"])))
+    y1 = int(min(ink_mask.shape[0], np.ceil(box["inkBottom"])))
+    if x1 <= x0 or y1 <= y0:
+        return [box]
+
+    region = ink_mask[y0:y1, x0:x1]
+    column_has_ink = np.any(region, axis=0)
+    min_gap = int(max(6, min(18, round(height * 0.55))))
+    segments: list[tuple[int, int]] = []
+    start = 0
+    gap_start: int | None = None
+
+    for index, has_ink in enumerate(column_has_ink.tolist()):
+        if has_ink:
+            if gap_start is not None:
+                gap_width = index - gap_start
+                if gap_width >= min_gap:
+                    end = gap_start
+                    if end - start >= 3:
+                        segments.append((start, end))
+                    start = index
+                gap_start = None
+        elif gap_start is None:
+            gap_start = index
+
+    if len(column_has_ink) - start >= 3:
+        segments.append((start, len(column_has_ink)))
+
+    if len(segments) <= 1:
+        return [box]
+
+    split_boxes: list[dict[str, float]] = []
+    for start_x, end_x in segments:
+        segment = region[:, start_x:end_x]
+        ys, xs = np.nonzero(segment)
+        if xs.size == 0 or ys.size == 0:
+            continue
+        ink_left = float(x0 + start_x + int(xs.min()))
+        ink_right = float(x0 + start_x + int(xs.max()) + 1)
+        ink_top = float(y0 + int(ys.min()))
+        ink_bottom = float(y0 + int(ys.max()) + 1)
+        ink_count = float(xs.size)
+        pad = max(1.0, height * 0.15)
+        split_boxes.append(
+            {
+                "left": max(box["left"], ink_left - pad),
+                "top": max(box["top"], ink_top - pad * 0.5),
+                "right": min(box["right"], ink_right + pad),
+                "bottom": min(box["bottom"], ink_bottom + pad * 0.5),
+                "inkLeft": ink_left,
+                "inkTop": ink_top,
+                "inkRight": ink_right,
+                "inkBottom": ink_bottom,
+                "inkCount": ink_count,
+                "dilatedCount": ink_count,
+            }
+        )
+
+    return split_boxes or [box]
 
 
 def vertical_overlap(a: dict[str, float], b: dict[str, float]) -> float:
@@ -222,7 +343,7 @@ def merge_text_boxes(boxes: list[dict[str, float]], *, merge_gap: float) -> list
             same_baseline = center_delta <= max(box_height(existing), box_height(box)) * 0.45
             gap = box["left"] - existing["right"]
             reverse_gap = existing["left"] - box["right"]
-            allowed_gap = max(merge_gap, max(box_height(existing), box_height(box)) * 0.75)
+            allowed_gap = max(merge_gap, max(box_height(existing), box_height(box)) * 0.35)
             near = (0 <= gap <= allowed_gap) or (0 <= reverse_gap <= allowed_gap)
             if (same_line or same_baseline) and near:
                 target_index = index
@@ -262,28 +383,152 @@ def drop_contained_boxes(boxes: list[dict[str, float]]) -> list[dict[str, float]
     return sorted(kept, key=lambda item: (item["top"], item["left"]))
 
 
-def padded_and_clamped(
+def styled_and_clamped(
     box: dict[str, float],
     *,
+    rgba: np.ndarray,
+    ink_mask: np.ndarray,
     image_width: int,
     image_height: int,
     pad_x: float,
     pad_y: float,
 ) -> dict[str, float]:
-    left = max(0.0, box["left"] - pad_x)
-    top = max(0.0, box["top"] - pad_y)
-    right = min(float(image_width), box["right"] + pad_x)
-    bottom = min(float(image_height), box["bottom"] + pad_y)
-    height = bottom - top
-    font_size = max(7.0, min(52.0, round(height * 0.74, 1)))
+    ink_left, ink_top, ink_right, ink_bottom = clamp_box(
+        box["inkLeft"] - pad_x,
+        box["inkTop"] - pad_y,
+        box["inkRight"] + pad_x,
+        box["inkBottom"] + pad_y,
+        image_width=image_width,
+        image_height=image_height,
+    )
+    ink_width = max(1.0, ink_right - ink_left)
+    ink_height = max(1.0, ink_bottom - ink_top)
+
+    font_size = max(6.0, min(56.0, round(ink_height * 0.86, 1)))
+    line_height = max(ink_height + 2.0, font_size * 1.16)
+    text_top = clamp(
+        ink_top - max(0.0, (line_height - ink_height) * 0.48),
+        0.0,
+        max(0.0, float(image_height) - line_height),
+    )
+    text_left = clamp(ink_left - max(1.0, font_size * 0.05), 0.0, float(image_width))
+    text_right = clamp(ink_right + max(1.0, font_size * 0.05), text_left + 1.0, float(image_width))
+
+    mask_pad_x = max(2.0, font_size * 0.08)
+    mask_pad_y = max(1.0, font_size * 0.06)
+    mask_left, mask_top, mask_right, mask_bottom = clamp_box(
+        ink_left - mask_pad_x,
+        ink_top - mask_pad_y,
+        ink_right + mask_pad_x,
+        ink_bottom + mask_pad_y,
+        image_width=image_width,
+        image_height=image_height,
+    )
+
+    x0, y0 = int(np.floor(mask_left)), int(np.floor(mask_top))
+    x1, y1 = int(np.ceil(mask_right)), int(np.ceil(mask_bottom))
+    region = rgba[y0:y1, x0:x1, :3]
+    region_ink = ink_mask[y0:y1, x0:x1]
+    foreground_pixels = region[region_ink]
+    background_pixels = region[~region_ink]
+    text_rgb = sample_median_rgb(foreground_pixels, (20, 20, 20))
+    background_rgb = sample_median_rgb(background_pixels, (255, 255, 255))
+    if color_luma(text_rgb) > 210 and color_luma(background_rgb) > 210:
+        background_rgb = (255, 255, 255)
+
+    char_count = max(1, min(24, int(round(ink_width / max(font_size * 1.1, 1.0)))))
+    template_text = "字" * char_count
+    bold = bool(font_size >= 17 or box["inkCount"] / max(ink_width * ink_height, 1.0) > 0.24)
     return {
-        "left": round(left, 1),
-        "top": round(top, 1),
-        "width": round(right - left, 1),
-        "height": round(height, 1),
+        "left": round(text_left, 1),
+        "top": round(text_top, 1),
+        "width": round(text_right - text_left, 1),
+        "height": round(line_height, 1),
+        "mask": {
+            "left": round(mask_left, 1),
+            "top": round(mask_top, 1),
+            "width": round(mask_right - mask_left, 1),
+            "height": round(mask_bottom - mask_top, 1),
+        },
+        "ink": {
+            "left": round(ink_left, 1),
+            "top": round(ink_top, 1),
+            "width": round(ink_width, 1),
+            "height": round(ink_height, 1),
+        },
+        "style": {
+            "textColor": rgb_to_hex(text_rgb),
+            "backgroundColor": rgb_to_hex(background_rgb),
+            "fontSize": font_size,
+            "bold": bold,
+            "alignment": "center",
+            "templateText": template_text,
+        },
         "fontSize": font_size,
         "inkDensity": round(box["inkCount"] / max((box_width(box) * box_height(box)), 1), 4),
     }
+
+
+def is_probable_edit_region(box: dict[str, float], *, image_height: int) -> bool:
+    style = box.get("style", {})
+    text_color = str(style.get("textColor", "#000000")).lstrip("#")
+    if len(text_color) != 6:
+        return True
+    red = int(text_color[0:2], 16)
+    green = int(text_color[2:4], 16)
+    blue = int(text_color[4:6], 16)
+    chroma = max(red, green, blue) - min(red, green, blue)
+    font_size = float(style.get("fontSize", box.get("fontSize", 0)))
+
+    below_header = box["top"] > image_height * 0.20
+    if below_header and font_size > 38:
+        return False
+    looks_like_colored_icon = chroma > 45 and font_size > 22 and box["width"] < 150
+    looks_like_single_large_mark = font_size > 30 and box["width"] < 90 and below_header
+    if below_header and (looks_like_colored_icon or looks_like_single_large_mark):
+        return False
+    return True
+
+
+def write_cleaned_image(
+    magick: str,
+    rgba: np.ndarray,
+    boxes: list[dict[str, float]],
+    target: Path,
+) -> None:
+    height, width = rgba.shape[:2]
+    cleaned = rgba.copy()
+
+    for box in boxes:
+        mask = box.get("mask") or box
+        style = box.get("style", {})
+        background = hex_to_rgb(str(style.get("backgroundColor", "#ffffff")), (255, 255, 255))
+        x0 = int(clamp(np.floor(float(mask["left"])), 0, width))
+        y0 = int(clamp(np.floor(float(mask["top"])), 0, height))
+        x1 = int(clamp(np.ceil(float(mask["left"] + mask["width"])), 0, width))
+        y1 = int(clamp(np.ceil(float(mask["top"] + mask["height"])), 0, height))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        cleaned[y0:y1, x0:x1, 0] = background[0]
+        cleaned[y0:y1, x0:x1, 1] = background[1]
+        cleaned[y0:y1, x0:x1, 2] = background[2]
+        cleaned[y0:y1, x0:x1, 3] = 255
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        magick,
+        "-size",
+        f"{width}x{height}",
+        "-depth",
+        "8",
+        "rgba:-",
+        str(target),
+    ]
+    try:
+        subprocess.run(command, input=cleaned.tobytes(), check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode("utf-8", "replace") if exc.stderr else ""
+        raise RuntimeError(f"Failed to write cleaned image {target}: {stderr}") from exc
 
 
 def detect_boxes(
@@ -313,9 +558,14 @@ def detect_boxes(
     )
     grouped = dilate(ink, line_gap, vertical_gap)
     raw_boxes = component_boxes(grouped, ink)
+    split_boxes = [
+        segment
+        for box in raw_boxes
+        for segment in split_box_by_column_gaps(box, ink)
+    ]
     filtered = [
         box
-        for box in raw_boxes
+        for box in split_boxes
         if is_probable_text_box(
             box,
             image_width=width,
@@ -327,14 +577,19 @@ def detect_boxes(
     ]
     merged = drop_contained_boxes(merge_text_boxes(filtered, merge_gap=merge_gap))
     final_boxes = [
-        padded_and_clamped(
+        styled_and_clamped(
             box,
+            rgba=rgba,
+            ink_mask=ink,
             image_width=width,
             image_height=height,
             pad_x=pad_x,
             pad_y=pad_y,
         )
         for box in merged
+    ]
+    final_boxes = [
+        box for box in final_boxes if is_probable_edit_region(box, image_height=height)
     ]
 
     if max_boxes > 0 and len(final_boxes) > max_boxes:
@@ -355,6 +610,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Detect editable text-box positions for PPT repair.")
     parser.add_argument("--input-dir", default="resource")
     parser.add_argument("--output-json", default="ppt_editable_output/text_regions.json")
+    parser.add_argument("--cleaned-dir", default=None)
     parser.add_argument("--magick", default=None)
     parser.add_argument("--dark-threshold", type=int, default=132)
     parser.add_argument("--colored-threshold", type=int, default=168)
@@ -365,7 +621,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-width", type=float, default=8.0)
     parser.add_argument("--min-height", type=float, default=6.0)
     parser.add_argument("--max-height", type=float, default=92.0)
-    parser.add_argument("--merge-gap", type=float, default=16.0)
+    parser.add_argument("--merge-gap", type=float, default=8.0)
     parser.add_argument("--pad-x", type=float, default=2.0)
     parser.add_argument("--pad-y", type=float, default=1.0)
     parser.add_argument("--max-boxes", type=int, default=260)
@@ -377,6 +633,8 @@ def main() -> int:
     input_dir = Path(args.input_dir).resolve()
     output_json = Path(args.output_json).resolve()
     output_json.parent.mkdir(parents=True, exist_ok=True)
+    cleaned_dir = Path(args.cleaned_dir).resolve() if args.cleaned_dir else output_json.parent / "cleaned"
+    cleaned_dir.mkdir(parents=True, exist_ok=True)
     magick = find_magick(args.magick)
     sources = image_files(input_dir, IMAGE_EXTENSIONS)
 
@@ -422,9 +680,12 @@ def main() -> int:
             pad_y=args.pad_y,
             max_boxes=args.max_boxes,
         )
+        cleaned_path = cleaned_dir / f"{source.stem}.text_removed.png"
+        write_cleaned_image(magick, rgba, boxes, cleaned_path)
         payload["images"].append(
             {
                 "source": str(source),
+                "cleanedSource": str(cleaned_path),
                 "name": source.name,
                 "stem": source.stem,
                 "width": original_width,
@@ -432,7 +693,7 @@ def main() -> int:
                 "textBoxes": boxes,
             }
         )
-        print(f"{source.name}: {len(boxes)} text box(es)")
+        print(f"{source.name}: {len(boxes)} text box(es), cleaned={cleaned_path.name}")
 
     output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print("Finished text-region detection.")

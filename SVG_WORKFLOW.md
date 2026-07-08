@@ -13,11 +13,56 @@ It creates:
 - `ppt_editable_output/combined_editable_text_layer.pptx`: one deck containing all images.
 - `ppt_editable_output/per_image/*.editable_text_layer.pptx`: one exact-size PPTX per source image.
 - `ppt_editable_output/text_regions.json`: detected text-line boxes.
+- `ppt_editable_output/cleaned/*.text_removed.png`: raster base images with detected text removed.
 - `ppt_editable_output/preview/*`: rendered previews.
 
-Each slide keeps the original image as a full-size visual reference and places
-PowerPoint-native editable text boxes over likely text lines. No OCR text is
-inserted by default; the boxes are meant as manual repair targets.
+Each slide uses the default `dual` mode:
+
+- `01_original_reference_*`: the untouched source image, kept as the bottom reference layer.
+- `02_cleaned_text_removed_*`: a full-slide cleaned image with detected text removed.
+- `03_text_*`: PowerPoint-native editable text boxes over likely text lines.
+
+In PowerPoint, open the Selection Pane. Hide `02_cleaned_text_removed` to see
+the original wording underneath, then show it again to edit on the clean base.
+The export also rewrites PPTX layer names so the Selection Pane should show:
+
+- `01_original_reference`: original image.
+- `02_cleaned_text_removed`: image with detected text covered.
+- `03_text_001`, `03_text_002`, ...: editable text boxes, ordered from top to bottom.
+
+Because this workflow does not OCR text, the placeholder defaults to `文字`.
+Replace each placeholder with the real text in PowerPoint.
+
+### Recommended when you need to read the original words
+
+If the placeholder boxes cover the original words while you are comparing layers,
+generate paired slides:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -ReferenceSlides
+```
+
+For each image this creates:
+
+- Slide A: original-only reference slide, used to read the source wording.
+- Slide B: editable slide with original image, cleaned base image, and editable text boxes.
+
+This is usually the most practical setup when OCR is unavailable: read the text
+on the reference slide, then type it into the matching box on the next slide.
+
+### Alternative editing modes
+
+To use the older blue-box locator mode without covering the original text:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -TemplateMode guide -GuideWidth 1 -Placeholder " "
+```
+
+To use per-text-box background patches instead of a single cleaned base image:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -TemplateMode mimic
+```
 
 If the detector misses text, try wider grouping:
 
@@ -31,10 +76,25 @@ If it creates too many boxes, make detection stricter:
 .\convert_images_to_editable_ppt.ps1 -DarkThreshold 115 -ColoredThreshold 150 -MaxBoxes 180
 ```
 
-To make every editable box show a visible marker:
+To force every editable box to use the same visible marker:
 
 ```powershell
 .\convert_images_to_editable_ppt.ps1 -Placeholder "文字"
+```
+
+To use an auto-length placeholder that roughly fills each detected line:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -Placeholder "__AUTO__"
+```
+
+This is useful for checking approximate font size and alignment, but it may cover
+more of the original wording when you toggle the cleaned layer off.
+
+To keep the current mode but show blue selection guides:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -GuideWidth 1
 ```
 
 ## SVG exports
