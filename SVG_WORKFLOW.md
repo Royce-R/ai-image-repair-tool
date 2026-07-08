@@ -1,5 +1,31 @@
 # Local Raster-to-SVG and Editable PowerPoint Workflow
 
+## Tool entry point
+
+Use `ImageRepairTool.ps1` when you want a simple input/output interface.
+The input can be one image file or a folder of images.
+
+```powershell
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides
+```
+
+Common targets:
+
+```powershell
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target svg -SvgMode embedded
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target both -ReferenceSlides -SvgMode embedded
+```
+
+The tool writes PowerPoint files under `output/ppt/` and SVG files under
+`output/svg/`.
+
+To create a distributable zip:
+
+```powershell
+.\package_tool.ps1
+```
+
 ## Best option for PowerPoint repair
 
 For manual PowerPoint editing, use the editable PPTX workflow:

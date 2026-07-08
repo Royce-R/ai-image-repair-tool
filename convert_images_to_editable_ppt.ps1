@@ -14,7 +14,7 @@ param(
     [string]$FontFace = "Microsoft YaHei",
     [switch]$NoSampledStyle,
     [switch]$ReferenceSlides,
-    [string]$SkillDir = "C:\Users\25296\.codex\plugins\cache\openai-primary-runtime\presentations\26.630.12135\skills\presentations"
+    [string]$SkillDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +47,57 @@ function Resolve-Node {
     return $command.Source
 }
 
+function Test-PresentationSkillDir {
+    param([string]$Path)
+
+    if ($Path -eq "") {
+        return $false
+    }
+
+    $setupScript = Join-Path $Path "container_tools\setup_artifact_tool_workspace.mjs"
+    return Test-Path $setupScript
+}
+
+function Resolve-PresentationSkillDir {
+    param([string]$Requested)
+
+    if ($Requested -ne "") {
+        $resolved = Resolve-Path -LiteralPath $Requested -ErrorAction Stop
+        if (Test-PresentationSkillDir -Path $resolved.Path) {
+            return $resolved.Path
+        }
+        throw "The specified SkillDir does not contain container_tools\setup_artifact_tool_workspace.mjs: $($resolved.Path)"
+    }
+
+    $searchRoots = @()
+    if ($env:CODEX_HOME -ne $null -and $env:CODEX_HOME -ne "") {
+        $searchRoots += Join-Path $env:CODEX_HOME "plugins\cache\openai-primary-runtime\presentations"
+    }
+    if ($env:USERPROFILE -ne $null -and $env:USERPROFILE -ne "") {
+        $searchRoots += Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-primary-runtime\presentations"
+    }
+
+    $candidates = @()
+    foreach ($root in $searchRoots) {
+        if (!(Test-Path $root)) {
+            continue
+        }
+        $versionDirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue
+        foreach ($versionDir in $versionDirs) {
+            $candidate = Join-Path $versionDir.FullName "skills\presentations"
+            if (Test-PresentationSkillDir -Path $candidate) {
+                $candidates += Get-Item -LiteralPath $candidate
+            }
+        }
+    }
+
+    if ($candidates.Count -gt 0) {
+        return ($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+    }
+
+    throw "Codex presentations artifact tool was not found. Run inside a Codex environment with the presentations plugin, or pass -SkillDir explicitly."
+}
+
 $python = Resolve-Python
 $node = Resolve-Node
 if ($null -eq $env:HOME -or $env:HOME -eq "") {
@@ -57,7 +108,8 @@ $regionsJson = Join-Path $outputPath "text_regions.json"
 $detector = Join-Path $PSScriptRoot "tools\detect_text_regions.py"
 $builderSource = Join-Path $PSScriptRoot "tools\create_editable_text_pptx.mjs"
 $layerNamer = Join-Path $PSScriptRoot "tools\name_pptx_layers.py"
-$setupScript = Join-Path $SkillDir "container_tools\setup_artifact_tool_workspace.mjs"
+$resolvedSkillDir = Resolve-PresentationSkillDir -Requested $SkillDir
+$setupScript = Join-Path $resolvedSkillDir "container_tools\setup_artifact_tool_workspace.mjs"
 
 if (!(Test-Path $setupScript)) {
     throw "Artifact-tool setup script was not found: $setupScript"

@@ -7,6 +7,11 @@ ppt_editable_output/
 ppt_editable_output_*/
 svg_output/
 svg_output_*/
+output/
+output_*/
+tool_output/
+tool_output_*/
+dist/
 
 # Local runtime/tooling caches
 .cache/
