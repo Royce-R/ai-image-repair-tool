@@ -1,0 +1,17 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Local workflow outputs
+ppt_editable_output/
+ppt_editable_output_*/
+svg_output/
+svg_output_*/
+
+# Local runtime/tooling caches
+.cache/
+node_modules/
+
+# Temporary files
+*.tmp
+*.log
