@@ -10,6 +10,12 @@
 New-Item -ItemType Directory -Force .\resource
 ```
 
+检查当前环境是否能运行：
+
+```powershell
+.\ImageRepairTool.ps1 -Check -Input .\resource -Target both
+```
+
 生成可编辑 PowerPoint 模板：
 
 ```powershell
@@ -55,8 +61,9 @@ New-Item -ItemType Directory -Force .\resource
 ## 常用参数
 
 - `-Input`：输入图片文件或图片文件夹。
-- `-Output`：输出目录。
+- `-Output`：输出目录，默认 `.\output`。
 - `-Target ppt|svg|both`：选择导出 PPT、SVG 或两者都导出。
+- `-Check`：只检查输入和依赖，不执行转换。
 - `-ReferenceSlides`：为每张图额外生成原图参考页，推荐开启。
 - `-TemplateMode dual|mimic|guide`：PPT 模板模式，默认 `dual`。
 - `-Placeholder "文字"`：设置文本框占位文字。
@@ -65,6 +72,7 @@ New-Item -ItemType Directory -Force .\resource
 - `-OcrMode auto|off|tesseract`：OCR 开关，默认自动查找 Tesseract。
 - `-FallbackGlyph "□"`：识别失败时使用的占位字符。
 - `-SvgMode both|embedded|trace`：SVG 导出模式。
+- `-Magick "路径"`：手动指定 ImageMagick 的 `magick.exe`，适合没有加入 PATH 的环境。
 
 ## 打包发布
 

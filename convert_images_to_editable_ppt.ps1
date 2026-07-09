@@ -25,6 +25,7 @@ param(
     [int]$OcrScale = 3,
     [double]$OcrMinConfidence = 45.0,
     [string]$FallbackGlyph = ([char]0x25A1),
+    [string]$Magick = "",
     [string]$SkillDir = ""
 )
 
@@ -142,7 +143,8 @@ if (!(Test-Path $setupScript)) {
     --ocr-box-psm $OcrBoxPsm `
     --ocr-scale $OcrScale `
     --ocr-min-confidence $OcrMinConfidence `
-    --fallback-glyph $FallbackGlyph
+    --fallback-glyph $FallbackGlyph `
+    --magick $Magick
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
