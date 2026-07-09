@@ -81,6 +81,8 @@ New-Item -ItemType Directory -Force .\resource
 
 把 zip 解压后，用户在解压目录里运行 `ImageRepairTool.ps1` 即可。
 
+如果要把项目发布为公开 GitHub 仓库，请先看 [PUBLISHING.md](PUBLISHING.md)，尤其是输入图片、输出文件和 Git 历史清理检查。
+
 ## 运行依赖
 
 - PowerShell 5+ 或 PowerShell 7+。

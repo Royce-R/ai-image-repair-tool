@@ -26,6 +26,7 @@ $rootFiles = @(
     "convert_images_to_svg.ps1",
     "SVG_WORKFLOW.md",
     "README.md",
+    "PUBLISHING.md",
     "LICENSE",
     "requirements.txt"
 )
