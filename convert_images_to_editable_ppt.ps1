@@ -3,7 +3,7 @@ param(
     [string]$OutputDir = ".\ppt_editable_output",
     [ValidateSet("dual", "mimic", "guide")]
     [string]$TemplateMode = "dual",
-    [string]$Placeholder = "文字",
+    [string]$Placeholder = "__AUTO__",
     [int]$DarkThreshold = 132,
     [int]$ColoredThreshold = 168,
     [int]$LineGap = 6,
@@ -14,6 +14,17 @@ param(
     [string]$FontFace = "Microsoft YaHei",
     [switch]$NoSampledStyle,
     [switch]$ReferenceSlides,
+    [ValidateSet("auto", "off", "tesseract")]
+    [string]$OcrMode = "auto",
+    [ValidateSet("box", "image", "both")]
+    [string]$OcrStrategy = "box",
+    [string]$Tesseract = "",
+    [string]$OcrLang = "chi_sim+eng",
+    [int]$OcrPsm = 6,
+    [string]$OcrBoxPsm = "13,7",
+    [int]$OcrScale = 3,
+    [double]$OcrMinConfidence = 45.0,
+    [string]$FallbackGlyph = ([char]0x25A1),
     [string]$SkillDir = ""
 )
 
@@ -122,7 +133,16 @@ if (!(Test-Path $setupScript)) {
     --colored-threshold $ColoredThreshold `
     --line-gap $LineGap `
     --vertical-gap $VerticalGap `
-    --max-boxes $MaxBoxes
+    --max-boxes $MaxBoxes `
+    --ocr-mode $OcrMode `
+    --ocr-strategy $OcrStrategy `
+    --tesseract $Tesseract `
+    --ocr-lang $OcrLang `
+    --ocr-psm $OcrPsm `
+    --ocr-box-psm $OcrBoxPsm `
+    --ocr-scale $OcrScale `
+    --ocr-min-confidence $OcrMinConfidence `
+    --fallback-glyph $FallbackGlyph
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

@@ -1,8 +1,14 @@
 # AI 图片修复工具
 
-这个工具用于把 AI 生成的图片批量转换成可在 PowerPoint 里手动修复的模板，并可选导出 SVG。它不依赖 OCR 识别文字内容，而是尽量检测图片里的文字区域，生成可编辑文本框、原图参考层和扣字底图，方便你在 PPT 中按原图手动改字。
+这个工具用于把 AI 生成的图片批量转换成可在 PowerPoint 里手动修复的模板，并可选导出 SVG。它会尽量检测图片里的文字区域并调用 OCR 识别原文；识别不出来的位置用 `□` 这类安静占位符补足，方便你在 PPT 中按原图手动改字。
 
 ## 快速开始
+
+先创建输入目录，并把你有权使用的图片放进去：
+
+```powershell
+New-Item -ItemType Directory -Force .\resource
+```
 
 生成可编辑 PowerPoint 模板：
 
@@ -55,6 +61,9 @@
 - `-TemplateMode dual|mimic|guide`：PPT 模板模式，默认 `dual`。
 - `-Placeholder "文字"`：设置文本框占位文字。
 - `-AutoPlaceholder`：用长度更接近原文字段的占位符。
+- `-OcrStrategy box|image|both`：OCR 策略，默认 `box`，逐框识别更准但更慢。
+- `-OcrMode auto|off|tesseract`：OCR 开关，默认自动查找 Tesseract。
+- `-FallbackGlyph "□"`：识别失败时使用的占位字符。
 - `-SvgMode both|embedded|trace`：SVG 导出模式。
 
 ## 打包发布
@@ -78,12 +87,26 @@
 - Python，并安装 NumPy。
 - Node.js。
 - ImageMagick。
+- Tesseract OCR，建议安装中文简体语言包 `chi_sim` 和英文 `eng`。
 - PowerPoint 导出依赖 Codex presentations 插件中的 artifact tool。脚本会自动查找；如果自动查找失败，可以通过 `-SkillDir` 手动指定 presentations skill 目录。
+
+安装 Python 依赖：
+
+```powershell
+python -m pip install -r requirements.txt
+```
 
 ## 注意事项
 
-- 工具不会 OCR 原图文字，所以不会自动填入真实文字。
+- `resource/` 是本地输入目录，已被 `.gitignore` 忽略；不要把没有授权、含隐私或可能侵权的图片提交到公开仓库。
+- OCR 是尽力识别，不保证完全正确，尤其是 AI 生成的小字、错字和复杂背景。
 - `cleaned` 底图是基于检测区域和背景色采样生成的，不是真正的智能修图。
 - 复杂背景、装饰图标或非常小的文字可能会误检或漏检，需要在 PPT 中手动调整。
+- 如果觉得逐框 OCR 太慢，可以加 `-OcrStrategy image` 改用整图 OCR。
+- 如果不想 OCR，只想生成占位模板，可以加 `-OcrMode off`。
 - 如果检测框太少，可尝试调大 `-LineGap` 或 `-VerticalGap`。
 - 如果检测框太多，可尝试降低 `-DarkThreshold`、`-ColoredThreshold` 或 `-MaxBoxes`。
+
+## 许可证
+
+本项目使用 MIT License。第三方工具和运行时依赖遵循各自许可证。

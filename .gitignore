@@ -11,7 +11,11 @@ output/
 output_*/
 tool_output/
 tool_output_*/
+tool_output_*.png
 dist/
+
+# Local input images
+resource/
 
 # Local runtime/tooling caches
 .cache/

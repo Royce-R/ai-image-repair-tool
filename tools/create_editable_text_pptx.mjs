@@ -79,8 +79,8 @@ function transformBox(box, frame) {
 }
 
 function resolvePlaceholder(box, options) {
-  if (options.placeholder === "__AUTO__") {
-    return box.style?.templateText ?? "字";
+  if (options.placeholder === "__AUTO__" || options.placeholder === "__OCR__") {
+    return box.ocrText || box.style?.templateText || "□";
   }
   return options.placeholder;
 }
@@ -181,13 +181,24 @@ async function addRepairSlide(presentation, imageInfo, slideSize, options) {
     const color = options.useSampledStyle ? (style.textColor ?? options.placeholderColor) : options.placeholderColor;
     const bold = options.useSampledStyle ? Boolean(style.bold) : false;
     shape.text = resolvePlaceholder(box, options);
-    shape.text.style = { fontSize, color, bold };
+    shape.text.style = {
+      fontSize,
+      color,
+      bold,
+      wrap: "none",
+      autoFit: "shrinkText",
+      alignment: style.alignment ?? "center",
+      verticalAlignment: "top",
+      insets: { left: 0, right: 0, top: 0, bottom: 0 },
+    };
     shape.text.fontSize = fontSize;
     shape.text.color = color;
     shape.text.bold = bold;
     shape.text.typeface = options.fontFace;
     shape.text.alignment = style.alignment ?? "center";
     shape.text.verticalAlignment = "top";
+    shape.text.wrap = "none";
+    shape.text.autoFit = "shrinkText";
     shape.text.insets = { left: 0, right: 0, top: 0, bottom: 0 };
   }
 
@@ -223,7 +234,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const regionsPath = path.resolve(requireArg(args, "regions"));
   const outputDir = path.resolve(args["output-dir"] ?? "ppt_editable_output");
-  const placeholder = args.placeholder ?? "文字";
+  const placeholder = args.placeholder ?? "__AUTO__";
   const guideColor = args["guide-color"] ?? "#2563eb";
   const placeholderColor = args["placeholder-color"] ?? "#dc2626";
   const guideWidth = Number.parseFloat(args["guide-width"] ?? "0");

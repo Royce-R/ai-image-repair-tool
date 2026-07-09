@@ -14,7 +14,7 @@ param(
     [string]$TemplateMode = "dual",
 
     [switch]$ReferenceSlides,
-    [string]$Placeholder = "文字",
+    [string]$Placeholder = "__AUTO__",
     [switch]$AutoPlaceholder,
     [switch]$NoSampledStyle,
     [double]$GuideWidth = 0.0,
@@ -26,6 +26,17 @@ param(
     [int]$LineGap = 6,
     [int]$VerticalGap = 1,
     [int]$MaxBoxes = 260,
+    [ValidateSet("auto", "off", "tesseract")]
+    [string]$OcrMode = "auto",
+    [ValidateSet("box", "image", "both")]
+    [string]$OcrStrategy = "box",
+    [string]$Tesseract = "",
+    [string]$OcrLang = "chi_sim+eng",
+    [int]$OcrPsm = 6,
+    [string]$OcrBoxPsm = "13,7",
+    [int]$OcrScale = 3,
+    [double]$OcrMinConfidence = 45.0,
+    [string]$FallbackGlyph = ([char]0x25A1),
 
     [ValidateSet("both", "embedded", "trace")]
     [string]$SvgMode = "both",
@@ -102,6 +113,15 @@ function Invoke-PptWorkflow {
         GuideColor = $GuideColor
         GuideWidth = $effectiveGuideWidth
         FontFace = $FontFace
+        OcrMode = $OcrMode
+        OcrStrategy = $OcrStrategy
+        Tesseract = $Tesseract
+        OcrLang = $OcrLang
+        OcrPsm = $OcrPsm
+        OcrBoxPsm = $OcrBoxPsm
+        OcrScale = $OcrScale
+        OcrMinConfidence = $OcrMinConfidence
+        FallbackGlyph = $FallbackGlyph
     }
 
     if ($ReferenceSlides) {

@@ -25,7 +25,9 @@ $rootFiles = @(
     "convert_images_to_editable_ppt.ps1",
     "convert_images_to_svg.ps1",
     "SVG_WORKFLOW.md",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "requirements.txt"
 )
 
 foreach ($file in $rootFiles) {

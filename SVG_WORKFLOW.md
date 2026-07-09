@@ -56,8 +56,10 @@ The export also rewrites PPTX layer names so the Selection Pane should show:
 - `02_cleaned_text_removed`: image with detected text covered.
 - `03_text_001`, `03_text_002`, ...: editable text boxes, ordered from top to bottom.
 
-Because this workflow does not OCR text, the placeholder defaults to `文字`.
-Replace each placeholder with the real text in PowerPoint.
+The workflow now uses best-effort OCR by default. It tries to fill each editable
+text box with recognized text. Unrecognized characters are replaced by `□`, so
+the box keeps roughly the same visual footprint without filling the page with
+repeated `字` placeholders.
 
 ### Recommended when you need to read the original words
 
@@ -73,8 +75,35 @@ For each image this creates:
 - Slide A: original-only reference slide, used to read the source wording.
 - Slide B: editable slide with original image, cleaned base image, and editable text boxes.
 
-This is usually the most practical setup when OCR is unavailable: read the text
-on the reference slide, then type it into the matching box on the next slide.
+This is usually the most practical setup even with OCR enabled: use OCR text as
+a starting point, then compare against the reference slide and fix mistakes.
+
+### OCR controls
+
+The default OCR strategy is per-box recognition. It is slower than whole-image
+OCR, but usually works better for diagrams and PPT-like images:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -OcrStrategy box
+```
+
+For faster, less precise OCR:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -OcrStrategy image
+```
+
+To disable OCR and generate quiet placeholders only:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -OcrMode off
+```
+
+To change the fallback character:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -FallbackGlyph "＿"
+```
 
 ### Alternative editing modes
 

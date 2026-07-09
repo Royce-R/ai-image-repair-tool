@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-Detect likely text-line regions in raster images without OCR.
+Detect likely text-line regions in raster images and attach best-effort OCR text.
 
 The output is a JSON file consumed by create_editable_text_pptx.mjs. The goal is
 not perfect text recognition; it is to create editable PowerPoint text boxes in
-the right places so a human can manually repair AI-generated labels.
+the right places with text templates that are close enough for manual repair.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import shutil
 import subprocess
+import tempfile
+import unicodedata
 from collections import deque
 from pathlib import Path
 
@@ -195,6 +199,372 @@ def hex_to_rgb(value: str, fallback: tuple[int, int, int]) -> tuple[int, int, in
         return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
     except ValueError:
         return fallback
+
+
+def find_tesseract(requested: str | None) -> str | None:
+    candidates: list[str] = []
+    if requested:
+        candidates.append(requested)
+    candidates.extend(
+        [
+            "tesseract",
+            r"D:\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ]
+    )
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if Path(candidate).exists():
+            return str(Path(candidate))
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def quiet_template(char_count: int, fallback_glyph: str) -> str:
+    glyph = fallback_glyph or "□"
+    return glyph * max(1, min(80, char_count))
+
+
+def estimate_char_count(width: float, font_size: float) -> int:
+    return max(1, min(80, int(round(width / max(font_size * 0.92, 1.0)))))
+
+
+def normalize_ocr_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    return "".join(part for part in normalized.strip() if not part.isspace())
+
+
+def parse_conf(value: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -1.0
+
+
+def run_tesseract_tsv(
+    tesseract: str | None,
+    image_path: Path,
+    *,
+    lang: str,
+    psm: int,
+) -> list[dict[str, float | str]]:
+    if not tesseract:
+        return []
+
+    command = [
+        tesseract,
+        str(image_path),
+        "stdout",
+        "-l",
+        lang,
+        "--psm",
+        str(psm),
+        "tsv",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=45,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        print(f"Warning: OCR failed for {image_path.name}: {exc}")
+        return []
+
+    tokens: list[dict[str, float | str]] = []
+    reader = csv.DictReader(result.stdout.splitlines(), delimiter="\t")
+    for row in reader:
+        if row.get("level") != "5":
+            continue
+        text = normalize_ocr_text(row.get("text", ""))
+        if not text:
+            continue
+        left = parse_conf(row.get("left", ""))
+        top = parse_conf(row.get("top", ""))
+        width = parse_conf(row.get("width", ""))
+        height = parse_conf(row.get("height", ""))
+        conf = parse_conf(row.get("conf", ""))
+        if width <= 0 or height <= 0:
+            continue
+        tokens.append(
+            {
+                "left": left,
+                "top": top,
+                "right": left + width,
+                "bottom": top + height,
+                "width": width,
+                "height": height,
+                "conf": conf,
+                "text": text,
+                "lineKey": f"{row.get('block_num', '')}:{row.get('par_num', '')}:{row.get('line_num', '')}",
+            }
+        )
+    return tokens
+
+
+def horizontal_gap(previous: dict[str, float | str], current: dict[str, float | str]) -> float:
+    return float(current["left"]) - float(previous["right"])
+
+
+def token_inside_box(token: dict[str, float | str], box: dict[str, float]) -> bool:
+    center_x = (float(token["left"]) + float(token["right"])) / 2
+    center_y = (float(token["top"]) + float(token["bottom"])) / 2
+    inflate_x = max(3.0, box["width"] * 0.08)
+    inflate_y = max(3.0, box["height"] * 0.35)
+    return (
+        box["left"] - inflate_x <= center_x <= box["left"] + box["width"] + inflate_x
+        and box["top"] - inflate_y <= center_y <= box["top"] + box["height"] + inflate_y
+    )
+
+
+def token_to_text(
+    token: dict[str, float | str],
+    *,
+    font_size: float,
+    min_confidence: float,
+    fallback_glyph: str,
+) -> str:
+    text = str(token["text"])
+    conf = float(token["conf"])
+    if conf >= min_confidence:
+        return text
+    return quiet_template(estimate_char_count(float(token["width"]), font_size), fallback_glyph)
+
+
+def join_ocr_tokens(
+    tokens: list[dict[str, float | str]],
+    *,
+    font_size: float,
+    min_confidence: float,
+    fallback_glyph: str,
+) -> str:
+    if not tokens:
+        return ""
+    parts: list[str] = []
+    groups: dict[str, list[dict[str, float | str]]] = {}
+    for token in tokens:
+        groups.setdefault(str(token.get("lineKey", "")), []).append(token)
+
+    line_groups = sorted(
+        groups.values(),
+        key=lambda group: (min(float(item["top"]) for item in group), min(float(item["left"]) for item in group)),
+    )
+    for group_index, group in enumerate(line_groups):
+        if group_index > 0:
+            parts.append("\n")
+        ordered = sorted(group, key=lambda item: float(item["left"]))
+        previous: dict[str, float | str] | None = None
+        for token in ordered:
+            text = token_to_text(
+                token,
+                font_size=font_size,
+                min_confidence=min_confidence,
+                fallback_glyph=fallback_glyph,
+            )
+            if previous is not None and horizontal_gap(previous, token) > font_size * 0.55:
+                prev_text = str(previous["text"])
+                if prev_text.isascii() and text.isascii() and prev_text[-1:].isalnum() and text[:1].isalnum():
+                    parts.append(" ")
+            parts.append(text)
+            previous = token
+    return "".join(parts).strip()
+
+
+def attach_ocr_text(
+    boxes: list[dict[str, float]],
+    tokens: list[dict[str, float | str]],
+    *,
+    fallback_glyph: str,
+    min_confidence: float,
+    engine: str,
+) -> None:
+    for box in boxes:
+        style = box.setdefault("style", {})
+        font_size = float(style.get("fontSize", box.get("fontSize", 12)))
+        matched = [token for token in tokens if token_inside_box(token, box)]
+        ocr_text = join_ocr_tokens(
+            matched,
+            font_size=font_size,
+            min_confidence=min_confidence,
+            fallback_glyph=fallback_glyph,
+        )
+        if ocr_text:
+            confidences = [float(token["conf"]) for token in matched if float(token["conf"]) >= 0]
+            box["ocrText"] = ocr_text
+            box["ocrConfidence"] = round(sum(confidences) / max(len(confidences), 1), 1)
+            box["ocrEngine"] = engine
+            style["templateText"] = ocr_text
+            continue
+
+        char_count = int(style.get("estimatedCharCount", estimate_char_count(box["width"], font_size)))
+        style["templateText"] = quiet_template(char_count, fallback_glyph)
+        box["ocrText"] = ""
+        box["ocrConfidence"] = None
+        box["ocrEngine"] = engine if tokens else "none"
+
+
+def parse_psm_list(value: str) -> list[int]:
+    psms: list[int] = []
+    for part in str(value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            psms.append(int(part))
+        except ValueError:
+            continue
+    return psms or [13, 7]
+
+
+def crop_box_for_ocr(
+    magick: str,
+    image_path: Path,
+    box: dict[str, float],
+    target: Path,
+    *,
+    image_width: int,
+    image_height: int,
+    scale: int,
+) -> bool:
+    style = box.get("style", {})
+    font_size = float(style.get("fontSize", box.get("fontSize", 12)))
+    ink = box.get("ink", box)
+    left = float(ink.get("left", box["left"]))
+    top = float(ink.get("top", box["top"]))
+    width = float(ink.get("width", box["width"]))
+    height = float(ink.get("height", box["height"]))
+    pad_x = max(4.0, font_size * 0.28)
+    pad_y = max(3.0, font_size * 0.22)
+    x0 = int(clamp(np.floor(left - pad_x), 0, image_width))
+    y0 = int(clamp(np.floor(top - pad_y), 0, image_height))
+    x1 = int(clamp(np.ceil(left + width + pad_x), 0, image_width))
+    y1 = int(clamp(np.ceil(top + height + pad_y), 0, image_height))
+    if x1 <= x0 or y1 <= y0:
+        return False
+
+    command = [
+        magick,
+        str(image_path),
+        "-crop",
+        f"{x1 - x0}x{y1 - y0}+{x0}+{y0}",
+        "+repage",
+        "-resize",
+        f"{max(1, scale) * 100}%",
+        "-colorspace",
+        "Gray",
+        "-contrast-stretch",
+        "1%x1%",
+        str(target),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"Warning: failed to crop OCR box from {image_path.name}: {exc}")
+        return False
+    return True
+
+
+def average_confidence(tokens: list[dict[str, float | str]]) -> float:
+    confidences = [float(token["conf"]) for token in tokens if float(token["conf"]) >= 0]
+    if not confidences:
+        return -1.0
+    return sum(confidences) / len(confidences)
+
+
+def box_ocr_candidate(
+    tesseract: str,
+    crop_path: Path,
+    *,
+    lang: str,
+    psm: int,
+    font_size: float,
+    ocr_scale: int,
+    min_confidence: float,
+    fallback_glyph: str,
+) -> tuple[str, float]:
+    tokens = run_tesseract_tsv(tesseract, crop_path, lang=lang, psm=psm)
+    if not tokens:
+        return "", -1.0
+    text = join_ocr_tokens(
+        tokens,
+        font_size=font_size * max(1, ocr_scale),
+        min_confidence=min_confidence,
+        fallback_glyph=fallback_glyph,
+    )
+    return text, average_confidence(tokens)
+
+
+def attach_box_ocr_text(
+    magick: str,
+    tesseract: str | None,
+    image_path: Path,
+    boxes: list[dict[str, float]],
+    *,
+    image_width: int,
+    image_height: int,
+    lang: str,
+    psms: list[int],
+    ocr_scale: int,
+    fallback_glyph: str,
+    min_confidence: float,
+) -> int:
+    if not tesseract:
+        return 0
+
+    updated = 0
+    with tempfile.TemporaryDirectory(prefix="image_repair_ocr_") as temp_dir:
+        temp_root = Path(temp_dir)
+        for index, box in enumerate(boxes, start=1):
+            crop_path = temp_root / f"box_{index:04d}.png"
+            if not crop_box_for_ocr(
+                magick,
+                image_path,
+                box,
+                crop_path,
+                image_width=image_width,
+                image_height=image_height,
+                scale=ocr_scale,
+            ):
+                continue
+
+            style = box.setdefault("style", {})
+            font_size = float(style.get("fontSize", box.get("fontSize", 12)))
+            best_text = ""
+            best_confidence = -1.0
+            for psm in psms:
+                text, confidence = box_ocr_candidate(
+                    tesseract,
+                    crop_path,
+                    lang=lang,
+                    psm=psm,
+                    font_size=font_size,
+                    ocr_scale=ocr_scale,
+                    min_confidence=min_confidence,
+                    fallback_glyph=fallback_glyph,
+                )
+                if text and confidence > best_confidence:
+                    best_text = text
+                    best_confidence = confidence
+
+            if not best_text:
+                continue
+
+            box["ocrText"] = best_text
+            box["ocrConfidence"] = round(best_confidence, 1) if best_confidence >= 0 else None
+            box["ocrEngine"] = "tesseract"
+            box["ocrMethod"] = "box"
+            style["templateText"] = best_text
+            updated += 1
+    return updated
 
 
 def is_probable_text_box(
@@ -392,6 +762,7 @@ def styled_and_clamped(
     image_height: int,
     pad_x: float,
     pad_y: float,
+    fallback_glyph: str,
 ) -> dict[str, float]:
     ink_left, ink_top, ink_right, ink_bottom = clamp_box(
         box["inkLeft"] - pad_x,
@@ -436,8 +807,8 @@ def styled_and_clamped(
     if color_luma(text_rgb) > 210 and color_luma(background_rgb) > 210:
         background_rgb = (255, 255, 255)
 
-    char_count = max(1, min(24, int(round(ink_width / max(font_size * 1.1, 1.0)))))
-    template_text = "字" * char_count
+    char_count = estimate_char_count(ink_width, font_size)
+    template_text = quiet_template(char_count, fallback_glyph)
     bold = bool(font_size >= 17 or box["inkCount"] / max(ink_width * ink_height, 1.0) > 0.24)
     return {
         "left": round(text_left, 1),
@@ -462,6 +833,7 @@ def styled_and_clamped(
             "fontSize": font_size,
             "bold": bold,
             "alignment": "center",
+            "estimatedCharCount": char_count,
             "templateText": template_text,
         },
         "fontSize": font_size,
@@ -547,6 +919,7 @@ def detect_boxes(
     pad_x: float,
     pad_y: float,
     max_boxes: int,
+    fallback_glyph: str,
 ) -> list[dict[str, float]]:
     height, width = rgba.shape[:2]
     ink = probable_ink_mask(
@@ -585,6 +958,7 @@ def detect_boxes(
             image_height=height,
             pad_x=pad_x,
             pad_y=pad_y,
+            fallback_glyph=fallback_glyph,
         )
         for box in merged
     ]
@@ -625,6 +999,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pad-x", type=float, default=2.0)
     parser.add_argument("--pad-y", type=float, default=1.0)
     parser.add_argument("--max-boxes", type=int, default=260)
+    parser.add_argument("--ocr-mode", choices=["auto", "off", "tesseract"], default="auto")
+    parser.add_argument("--ocr-strategy", choices=["box", "image", "both"], default="box")
+    parser.add_argument("--tesseract", default=None)
+    parser.add_argument("--ocr-lang", default="chi_sim+eng")
+    parser.add_argument("--ocr-psm", type=int, default=6)
+    parser.add_argument("--ocr-box-psm", default="13,7")
+    parser.add_argument("--ocr-scale", type=int, default=3)
+    parser.add_argument("--ocr-min-confidence", type=float, default=45.0)
+    parser.add_argument("--fallback-glyph", default="□")
     return parser.parse_args()
 
 
@@ -636,6 +1019,10 @@ def main() -> int:
     cleaned_dir = Path(args.cleaned_dir).resolve() if args.cleaned_dir else output_json.parent / "cleaned"
     cleaned_dir.mkdir(parents=True, exist_ok=True)
     magick = find_magick(args.magick)
+    tesseract = None if args.ocr_mode == "off" else find_tesseract(args.tesseract)
+    if args.ocr_mode == "tesseract" and not tesseract:
+        raise RuntimeError("Tesseract OCR was requested but was not found.")
+    ocr_box_psms = parse_psm_list(args.ocr_box_psm)
     sources = image_files(input_dir, IMAGE_EXTENSIONS)
 
     payload = {
@@ -646,7 +1033,16 @@ def main() -> int:
             "coloredThreshold": args.colored_threshold,
             "lineGap": args.line_gap,
             "verticalGap": args.vertical_gap,
-            "note": "Regions are likely text lines for manual editing; no OCR text is included.",
+            "ocrMode": args.ocr_mode,
+            "ocrStrategy": args.ocr_strategy,
+            "ocrEngine": "tesseract" if tesseract else "none",
+            "ocrLang": args.ocr_lang if tesseract else None,
+            "ocrPsm": args.ocr_psm,
+            "ocrBoxPsm": ocr_box_psms,
+            "ocrScale": args.ocr_scale,
+            "ocrMinConfidence": args.ocr_min_confidence,
+            "fallbackGlyph": args.fallback_glyph,
+            "note": "Regions are likely text lines for manual editing; OCR text is best-effort.",
         },
         "images": [],
     }
@@ -654,6 +1050,15 @@ def main() -> int:
     print(f"Input:  {input_dir}")
     print(f"Output: {output_json}")
     print(f"Magick: {magick}")
+    if args.ocr_mode == "off":
+        print("OCR:    off")
+    elif tesseract:
+        print(
+            f"OCR:    {tesseract} "
+            f"({args.ocr_lang}, strategy={args.ocr_strategy}, image-psm={args.ocr_psm}, box-psm={ocr_box_psms})"
+        )
+    else:
+        print("OCR:    unavailable; using quiet placeholders")
 
     for source in sources:
         original_width, original_height = identify_size(magick, source)
@@ -679,7 +1084,45 @@ def main() -> int:
             pad_x=args.pad_x,
             pad_y=args.pad_y,
             max_boxes=args.max_boxes,
+            fallback_glyph=args.fallback_glyph,
         )
+        if tesseract and args.ocr_strategy in {"image", "both"}:
+            ocr_tokens = run_tesseract_tsv(
+                tesseract,
+                source,
+                lang=args.ocr_lang,
+                psm=args.ocr_psm,
+            )
+            attach_ocr_text(
+                boxes,
+                ocr_tokens,
+                fallback_glyph=args.fallback_glyph,
+                min_confidence=args.ocr_min_confidence,
+                engine="tesseract",
+            )
+        else:
+            attach_ocr_text(
+                boxes,
+                [],
+                fallback_glyph=args.fallback_glyph,
+                min_confidence=args.ocr_min_confidence,
+                engine="none",
+            )
+
+        if tesseract and args.ocr_strategy in {"box", "both"}:
+            attach_box_ocr_text(
+                magick,
+                tesseract,
+                source,
+                boxes,
+                image_width=original_width,
+                image_height=original_height,
+                lang=args.ocr_lang,
+                psms=ocr_box_psms,
+                ocr_scale=args.ocr_scale,
+                fallback_glyph=args.fallback_glyph,
+                min_confidence=args.ocr_min_confidence,
+            )
         cleaned_path = cleaned_dir / f"{source.stem}.text_removed.png"
         write_cleaned_image(magick, rgba, boxes, cleaned_path)
         payload["images"].append(
@@ -693,7 +1136,8 @@ def main() -> int:
                 "textBoxes": boxes,
             }
         )
-        print(f"{source.name}: {len(boxes)} text box(es), cleaned={cleaned_path.name}")
+        ocr_count = sum(1 for box in boxes if box.get("ocrText"))
+        print(f"{source.name}: {len(boxes)} text box(es), ocr={ocr_count}, cleaned={cleaned_path.name}")
 
     output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print("Finished text-region detection.")
