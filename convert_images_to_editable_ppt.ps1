@@ -25,8 +25,7 @@ param(
     [int]$OcrScale = 3,
     [double]$OcrMinConfidence = 45.0,
     [string]$FallbackGlyph = ([char]0x25A1),
-    [string]$Magick = "",
-    [string]$SkillDir = ""
+    [string]$Magick = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,57 +58,6 @@ function Resolve-Node {
     return $command.Source
 }
 
-function Test-PresentationSkillDir {
-    param([string]$Path)
-
-    if ($Path -eq "") {
-        return $false
-    }
-
-    $setupScript = Join-Path $Path "container_tools\setup_artifact_tool_workspace.mjs"
-    return Test-Path $setupScript
-}
-
-function Resolve-PresentationSkillDir {
-    param([string]$Requested)
-
-    if ($Requested -ne "") {
-        $resolved = Resolve-Path -LiteralPath $Requested -ErrorAction Stop
-        if (Test-PresentationSkillDir -Path $resolved.Path) {
-            return $resolved.Path
-        }
-        throw "The specified SkillDir does not contain container_tools\setup_artifact_tool_workspace.mjs: $($resolved.Path)"
-    }
-
-    $searchRoots = @()
-    if ($env:CODEX_HOME -ne $null -and $env:CODEX_HOME -ne "") {
-        $searchRoots += Join-Path $env:CODEX_HOME "plugins\cache\openai-primary-runtime\presentations"
-    }
-    if ($env:USERPROFILE -ne $null -and $env:USERPROFILE -ne "") {
-        $searchRoots += Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-primary-runtime\presentations"
-    }
-
-    $candidates = @()
-    foreach ($root in $searchRoots) {
-        if (!(Test-Path $root)) {
-            continue
-        }
-        $versionDirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue
-        foreach ($versionDir in $versionDirs) {
-            $candidate = Join-Path $versionDir.FullName "skills\presentations"
-            if (Test-PresentationSkillDir -Path $candidate) {
-                $candidates += Get-Item -LiteralPath $candidate
-            }
-        }
-    }
-
-    if ($candidates.Count -gt 0) {
-        return ($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-    }
-
-    throw "Codex presentations artifact tool was not found. Run inside a Codex environment with the presentations plugin, or pass -SkillDir explicitly."
-}
-
 $python = Resolve-Python
 $node = Resolve-Node
 if ($null -eq $env:HOME -or $env:HOME -eq "") {
@@ -118,45 +66,43 @@ if ($null -eq $env:HOME -or $env:HOME -eq "") {
 $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $OutputDir)
 $regionsJson = Join-Path $outputPath "text_regions.json"
 $detector = Join-Path $PSScriptRoot "tools\detect_text_regions.py"
-$builderSource = Join-Path $PSScriptRoot "tools\create_editable_text_pptx.mjs"
+$builder = Join-Path $PSScriptRoot "tools\create_editable_text_pptx.mjs"
 $layerNamer = Join-Path $PSScriptRoot "tools\name_pptx_layers.py"
-$resolvedSkillDir = Resolve-PresentationSkillDir -Requested $SkillDir
-$setupScript = Join-Path $resolvedSkillDir "container_tools\setup_artifact_tool_workspace.mjs"
 
-if (!(Test-Path $setupScript)) {
-    throw "Artifact-tool setup script was not found: $setupScript"
+if (!(Test-Path $builder)) {
+    throw "PPTX builder script was not found: $builder"
 }
 
-& $python $detector `
-    --input-dir $InputDir `
-    --output-json $regionsJson `
-    --dark-threshold $DarkThreshold `
-    --colored-threshold $ColoredThreshold `
-    --line-gap $LineGap `
-    --vertical-gap $VerticalGap `
-    --max-boxes $MaxBoxes `
-    --ocr-mode $OcrMode `
-    --ocr-strategy $OcrStrategy `
-    --tesseract $Tesseract `
-    --ocr-lang $OcrLang `
-    --ocr-psm $OcrPsm `
-    --ocr-box-psm $OcrBoxPsm `
-    --ocr-scale $OcrScale `
-    --ocr-min-confidence $OcrMinConfidence `
-    --fallback-glyph $FallbackGlyph `
-    --magick $Magick
+$detectorArgs = @(
+    $detector,
+    "--input-dir", $InputDir,
+    "--output-json", $regionsJson,
+    "--dark-threshold", $DarkThreshold,
+    "--colored-threshold", $ColoredThreshold,
+    "--line-gap", $LineGap,
+    "--vertical-gap", $VerticalGap,
+    "--max-boxes", $MaxBoxes,
+    "--ocr-mode", $OcrMode,
+    "--ocr-strategy", $OcrStrategy,
+    "--ocr-lang", $OcrLang,
+    "--ocr-psm", $OcrPsm,
+    "--ocr-box-psm", $OcrBoxPsm,
+    "--ocr-scale", $OcrScale,
+    "--ocr-min-confidence", $OcrMinConfidence,
+    "--fallback-glyph", $FallbackGlyph
+)
+
+if ($Tesseract -ne "") {
+    $detectorArgs += @("--tesseract", $Tesseract)
+}
+if ($Magick -ne "") {
+    $detectorArgs += @("--magick", $Magick)
+}
+
+& $python @detectorArgs
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
-
-$workspace = Join-Path ([System.IO.Path]::GetTempPath()) "260708pic_element_extract_ppt_artifact"
-& $node $setupScript --workspace $workspace
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
-}
-
-$builder = Join-Path $workspace "create_editable_text_pptx.mjs"
-Copy-Item -Path $builderSource -Destination $builder -Force
 
 & $node $builder `
     --regions $regionsJson `

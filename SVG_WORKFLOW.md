@@ -40,7 +40,6 @@ It creates:
 - `ppt_editable_output/per_image/*.editable_text_layer.pptx`: one exact-size PPTX per source image.
 - `ppt_editable_output/text_regions.json`: detected text-line boxes.
 - `ppt_editable_output/cleaned/*.text_removed.png`: raster base images with detected text removed.
-- `ppt_editable_output/preview/*`: rendered previews.
 
 Each slide uses the default `dual` mode:
 

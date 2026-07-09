@@ -45,7 +45,6 @@ New-Item -ItemType Directory -Force .\resource
 - `output/ppt/combined_editable_text_layer.pptx`：包含所有图片的总 PPT。
 - `output/ppt/per_image/*.pptx`：每张图片一个单独 PPT。
 - `output/ppt/cleaned/*.text_removed.png`：扣掉检测文字后的底图。
-- `output/ppt/preview/*`：PPT 渲染预览图。
 - `output/svg/embedded/*.svg`：视觉保持最准确的嵌入式 SVG。
 - `output/svg/traced/*.svg`：启用描摹时生成的近似矢量 SVG。
 
@@ -95,15 +94,16 @@ New-Item -ItemType Directory -Force .\resource
 
 - PowerShell 5+ 或 PowerShell 7+。
 - Python，并安装 NumPy。
-- Node.js。
+- Node.js，并安装本项目的 Node 依赖。
 - ImageMagick。
 - Tesseract OCR，建议安装中文简体语言包 `chi_sim` 和英文 `eng`。
-- PowerPoint 导出依赖 Codex presentations 插件中的 artifact tool。脚本会自动查找；如果自动查找失败，可以通过 `-SkillDir` 手动指定 presentations skill 目录。
+- PowerPoint 导出使用 `pptxgenjs`，不依赖 Codex presentations 插件。
 
-安装 Python 依赖：
+安装依赖：
 
 ```powershell
 python -m pip install -r requirements.txt
+npm install
 ```
 
 ## 注意事项

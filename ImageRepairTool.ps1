@@ -45,7 +45,6 @@ param(
     [int]$SvgMaxPathsPerColor = 4000,
 
     [string]$Magick = "",
-    [string]$SkillDir = "",
     [switch]$Check
 )
 
@@ -184,57 +183,6 @@ function Resolve-Tesseract {
     return $null
 }
 
-function Test-PresentationSkillDir {
-    param([string]$Path)
-
-    if ($Path -eq "") {
-        return $false
-    }
-
-    $setupScript = Join-Path $Path "container_tools\setup_artifact_tool_workspace.mjs"
-    return Test-Path $setupScript
-}
-
-function Resolve-PresentationSkillDir {
-    param([string]$Requested)
-
-    if ($Requested -ne "") {
-        $resolved = Resolve-Path -LiteralPath $Requested -ErrorAction Stop
-        if (Test-PresentationSkillDir -Path $resolved.Path) {
-            return $resolved.Path
-        }
-        throw "The specified SkillDir does not contain container_tools\setup_artifact_tool_workspace.mjs: $($resolved.Path)"
-    }
-
-    $searchRoots = @()
-    if ($env:CODEX_HOME -ne $null -and $env:CODEX_HOME -ne "") {
-        $searchRoots += Join-Path $env:CODEX_HOME "plugins\cache\openai-primary-runtime\presentations"
-    }
-    if ($env:USERPROFILE -ne $null -and $env:USERPROFILE -ne "") {
-        $searchRoots += Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-primary-runtime\presentations"
-    }
-
-    $candidates = @()
-    foreach ($root in $searchRoots) {
-        if (!(Test-Path $root)) {
-            continue
-        }
-        $versionDirs = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue
-        foreach ($versionDir in $versionDirs) {
-            $candidate = Join-Path $versionDir.FullName "skills\presentations"
-            if (Test-PresentationSkillDir -Path $candidate) {
-                $candidates += Get-Item -LiteralPath $candidate
-            }
-        }
-    }
-
-    if ($candidates.Count -gt 0) {
-        return ($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-    }
-
-    throw "Codex presentations artifact tool was not found. Run inside a Codex environment with the presentations plugin, or pass -SkillDir explicitly."
-}
-
 function Write-CheckLine {
     param(
         [ValidateSet("OK", "WARN", "FAIL")]
@@ -317,12 +265,21 @@ function Invoke-PreflightCheck {
         }
 
         try {
-            $resolvedSkillDir = Resolve-PresentationSkillDir -Requested $SkillDir
-            Write-CheckLine -Status "OK" -Name "Presentation skill" -Detail $resolvedSkillDir
+            Push-Location $PSScriptRoot
+            try {
+                $packageCheck = (& $node -e "import('pptxgenjs').then(() => process.exit(0)).catch((error) => { console.error(error.message); process.exit(1); })" 2>&1)
+            }
+            finally {
+                Pop-Location
+            }
+            if ($LASTEXITCODE -ne 0) {
+                throw "pptxgenjs was not found. Run npm install before generating PPTX. $($packageCheck -join ' ')"
+            }
+            Write-CheckLine -Status "OK" -Name "PPTX package" -Detail "pptxgenjs is installed."
         }
         catch {
             $failures += 1
-            Write-CheckLine -Status "FAIL" -Name "Presentation skill" -Detail $_.Exception.Message
+            Write-CheckLine -Status "FAIL" -Name "PPTX package" -Detail $_.Exception.Message
         }
 
         if ($OcrMode -ne "off") {
@@ -439,9 +396,6 @@ function Invoke-PptWorkflow {
     }
     if ($NoSampledStyle) {
         $params.NoSampledStyle = $true
-    }
-    if ($SkillDir -ne "") {
-        $params.SkillDir = $SkillDir
     }
 
     & $scriptPath @params

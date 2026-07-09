@@ -28,7 +28,9 @@ $rootFiles = @(
     "README.md",
     "PUBLISHING.md",
     "LICENSE",
-    "requirements.txt"
+    "requirements.txt",
+    "package.json",
+    "package-lock.json"
 )
 
 foreach ($file in $rootFiles) {

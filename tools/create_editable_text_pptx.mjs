@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { Presentation, PresentationFile } from "@oai/artifact-tool";
+import pptxgen from "pptxgenjs";
+
+const PX_PER_INCH = 96;
+const SLIDE_BACKGROUND = "F8FAFC";
 
 function parseArgs(argv) {
   const args = {};
@@ -29,31 +32,32 @@ function requireArg(args, key) {
   return value;
 }
 
-function contentTypeFromBytes(bytes, fileName) {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return "image/jpeg";
-  }
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47
-  ) {
-    return "image/png";
-  }
-  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") {
-    return "image/webp";
-  }
-  const ext = path.extname(fileName).toLowerCase();
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".png") return "image/png";
-  if (ext === ".webp") return "image/webp";
-  return "image/png";
-}
-
 function safeName(value) {
   return String(value).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+}
+
+function color(value, fallback = "000000") {
+  const text = String(value ?? "").trim().replace(/^#/, "");
+  if (/^[0-9a-fA-F]{6}$/.test(text)) {
+    return text.toUpperCase();
+  }
+  if (/^[0-9a-fA-F]{8}$/.test(text)) {
+    return text.slice(0, 6).toUpperCase();
+  }
+  return fallback;
+}
+
+function pointsToInches(value) {
+  return value / PX_PER_INCH;
+}
+
+function pptPosition(position) {
+  return {
+    x: pointsToInches(position.left),
+    y: pointsToInches(position.top),
+    w: Math.max(pointsToInches(position.width), 0.01),
+    h: Math.max(pointsToInches(position.height), 0.01),
+  };
 }
 
 function fitContain(sourceWidth, sourceHeight, slideWidth, slideHeight) {
@@ -85,42 +89,45 @@ function resolvePlaceholder(box, options) {
   return options.placeholder;
 }
 
-function transparentColor() {
-  return "#ffffff00";
-}
-
-async function writeBlob(filePath, blob) {
-  await fs.writeFile(filePath, new Uint8Array(await blob.arrayBuffer()));
-}
-
-async function addReferenceSlide(presentation, imageInfo, slideSize) {
-  const slide = presentation.slides.add();
-  slide.background.fill = "#f8fafc";
-  const sourcePath = imageInfo.source;
-  const bytes = await fs.readFile(sourcePath);
-  const frame = fitContain(imageInfo.width, imageInfo.height, slideSize.width, slideSize.height);
-  slide.images.add({
-    blob: bytes,
-    contentType: contentTypeFromBytes(bytes, sourcePath),
-    alt: `01 original reference ${imageInfo.name}`,
-    fit: "contain",
-    position: {
-      left: frame.left,
-      top: frame.top,
-      width: frame.width,
-      height: frame.height,
-    },
+function createPresentation(slideSize) {
+  const pptx = new pptxgen();
+  const layoutName = `CUSTOM_${Math.round(slideSize.width)}_${Math.round(slideSize.height)}`;
+  pptx.defineLayout({
+    name: layoutName,
+    width: pointsToInches(slideSize.width),
+    height: pointsToInches(slideSize.height),
   });
+  pptx.layout = layoutName;
+  pptx.author = "AI Image Repair Tool";
+  pptx.company = "AI Image Repair Tool";
+  pptx.subject = "Editable image repair template";
+  pptx.title = "Editable Image Repair Template";
+  pptx.lang = "zh-CN";
+  return pptx;
+}
+
+function addSlide(pptx) {
+  const slide = pptx.addSlide();
+  slide.background = { color: SLIDE_BACKGROUND };
   return slide;
 }
 
-async function addRepairSlide(presentation, imageInfo, slideSize, options) {
-  const slide = presentation.slides.add();
-  slide.background.fill = "#f8fafc";
+function addImage(slide, imagePath, position, altText) {
+  slide.addImage({
+    path: imagePath,
+    ...pptPosition(position),
+    altText,
+  });
+}
 
-  const sourcePath = imageInfo.source;
-  const bytes = await fs.readFile(sourcePath);
-  const contentType = contentTypeFromBytes(bytes, sourcePath);
+async function addReferenceSlide(pptx, imageInfo, slideSize) {
+  const slide = addSlide(pptx);
+  const frame = fitContain(imageInfo.width, imageInfo.height, slideSize.width, slideSize.height);
+  addImage(slide, imageInfo.source, frame, `01 original reference ${imageInfo.name}`);
+}
+
+async function addRepairSlide(pptx, imageInfo, slideSize, options) {
+  const slide = addSlide(pptx);
   const frame = fitContain(imageInfo.width, imageInfo.height, slideSize.width, slideSize.height);
   const imagePosition = {
     left: frame.left,
@@ -129,80 +136,49 @@ async function addRepairSlide(presentation, imageInfo, slideSize, options) {
     height: frame.height,
   };
 
-  slide.images.add({
-    blob: bytes,
-    contentType,
-    alt: imageInfo.name,
-    name: `01_original_reference_${imageInfo.stem}`,
-    fit: "contain",
-    position: imagePosition,
-  });
+  addImage(slide, imageInfo.source, imagePosition, imageInfo.name);
 
   const cleanedPath = imageInfo.cleanedSource;
   const hasCleanedImage = options.templateMode === "dual" && cleanedPath;
   if (hasCleanedImage) {
-    const cleanedBytes = await fs.readFile(cleanedPath);
-    slide.images.add({
-      blob: cleanedBytes,
-      contentType: contentTypeFromBytes(cleanedBytes, cleanedPath),
-      alt: `${imageInfo.name} text removed`,
-      name: `02_cleaned_text_removed_${imageInfo.stem}`,
-      fit: "contain",
-      position: imagePosition,
-    });
+    addImage(slide, cleanedPath, imagePosition, `${imageInfo.name} text removed`);
   }
 
   for (const [index, box] of imageInfo.textBoxes.entries()) {
     const style = box.style ?? {};
     if (options.templateMode === "mimic" || (options.templateMode === "dual" && !hasCleanedImage)) {
       const maskBox = transformBox(box.mask ?? box, frame);
-      slide.shapes.add({
-        geometry: "rect",
-        name: `02_mask_${imageInfo.stem}_${box.id ?? `text_${index + 1}`}`,
-        position: maskBox,
-        fill: style.backgroundColor ?? "#ffffff",
-        line: { style: "solid", fill: "none", width: 0 },
+      const maskColor = color(style.backgroundColor, "FFFFFF");
+      slide.addShape(pptx.ShapeType.rect, {
+        ...pptPosition(maskBox),
+        fill: { color: maskColor },
+        line: { color: maskColor, transparency: 100 },
       });
     }
 
-    const position = transformBox(box, frame);
-    const shape = slide.shapes.add({
-      geometry: "textbox",
-      name: `03_text_${imageInfo.stem}_${box.id ?? `text_${index + 1}`}`,
-      position,
-      fill: transparentColor(),
-      line: {
-        style: "solid",
-        fill: options.guideWidth > 0 ? options.guideColor : "none",
-        width: options.guideWidth,
-      },
-    });
+    const textPosition = transformBox(box, frame);
     const fontSize = Math.max(5, Math.min(72, (style.fontSize ?? box.fontSize ?? 12) * frame.scale));
-    const color = options.useSampledStyle ? (style.textColor ?? options.placeholderColor) : options.placeholderColor;
-    const bold = options.useSampledStyle ? Boolean(style.bold) : false;
-    shape.text = resolvePlaceholder(box, options);
-    shape.text.style = {
+    const textColor = options.useSampledStyle ? color(style.textColor, color(options.placeholderColor, "DC2626")) : color(options.placeholderColor, "DC2626");
+    const guideColor = color(options.guideColor, "2563EB");
+    const text = resolvePlaceholder(box, options) || "□";
+    slide.addText(text, {
+      ...pptPosition(textPosition),
+      margin: 0,
+      fontFace: options.fontFace,
       fontSize,
-      color,
-      bold,
-      wrap: "none",
-      autoFit: "shrinkText",
-      alignment: style.alignment ?? "center",
-      verticalAlignment: "top",
-      insets: { left: 0, right: 0, top: 0, bottom: 0 },
-    };
-    shape.text.fontSize = fontSize;
-    shape.text.color = color;
-    shape.text.bold = bold;
-    shape.text.typeface = options.fontFace;
-    shape.text.alignment = style.alignment ?? "center";
-    shape.text.verticalAlignment = "top";
-    shape.text.wrap = "none";
-    shape.text.autoFit = "shrinkText";
-    shape.text.insets = { left: 0, right: 0, top: 0, bottom: 0 };
+      color: textColor,
+      bold: options.useSampledStyle ? Boolean(style.bold) : false,
+      align: style.alignment ?? "center",
+      valign: "top",
+      fit: "shrink",
+      breakLine: false,
+      fill: { color: "FFFFFF", transparency: 100 },
+      line: options.guideWidth > 0
+        ? { color: guideColor, width: options.guideWidth }
+        : { color: "FFFFFF", transparency: 100 },
+      name: `03_text_${imageInfo.stem}_${box.id ?? `text_${index + 1}`}`,
+    });
   }
-
-  return slide;
 }
 
 function combinedSlideSize(images) {
@@ -211,23 +187,9 @@ function combinedSlideSize(images) {
   return { width: base.width, height: base.height };
 }
 
-async function exportDeckWithPreviews(presentation, pptxPath, previewDir, previewPrefix) {
+async function writePresentation(pptx, pptxPath) {
   await fs.mkdir(path.dirname(pptxPath), { recursive: true });
-  await fs.mkdir(previewDir, { recursive: true });
-
-  for (const [index, slide] of presentation.slides.items.entries()) {
-    const stem = `${previewPrefix}-slide-${String(index + 1).padStart(2, "0")}`;
-    await writeBlob(
-      path.join(previewDir, `${stem}.png`),
-      await presentation.export({ slide, format: "png", scale: 1 }),
-    );
-  }
-
-  const montage = await presentation.export({ format: "webp", montage: true, scale: 1 });
-  await writeBlob(path.join(previewDir, `${previewPrefix}-montage.webp`), montage);
-
-  const pptx = await PresentationFile.exportPptx(presentation);
-  await pptx.save(pptxPath);
+  await pptx.writeFile({ fileName: pptxPath });
 }
 
 async function main() {
@@ -260,7 +222,7 @@ async function main() {
   };
 
   const combinedSize = combinedSlideSize(regions.images);
-  const combined = Presentation.create({ slideSize: combinedSize });
+  const combined = createPresentation(combinedSize);
   for (const imageInfo of regions.images) {
     if (options.referenceSlides) {
       await addReferenceSlide(combined, imageInfo, combinedSize);
@@ -269,44 +231,23 @@ async function main() {
   }
 
   const combinedPath = path.join(outputDir, "combined_editable_text_layer.pptx");
-  await exportDeckWithPreviews(
-    combined,
-    combinedPath,
-    path.join(outputDir, "preview"),
-    "combined",
-  );
+  await writePresentation(combined, combinedPath);
 
   const perImageDir = path.join(outputDir, "per_image");
   for (const imageInfo of regions.images) {
-    const exact = Presentation.create({
-      slideSize: { width: imageInfo.width, height: imageInfo.height },
-    });
+    const exactSize = { width: imageInfo.width, height: imageInfo.height };
+    const exact = createPresentation(exactSize);
     if (options.referenceSlides) {
-      await addReferenceSlide(
-        exact,
-        imageInfo,
-        { width: imageInfo.width, height: imageInfo.height },
-      );
+      await addReferenceSlide(exact, imageInfo, exactSize);
     }
-    await addRepairSlide(
-      exact,
-      imageInfo,
-      { width: imageInfo.width, height: imageInfo.height },
-      options,
-    );
+    await addRepairSlide(exact, imageInfo, exactSize, options);
     const filePath = path.join(perImageDir, `${safeName(imageInfo.stem)}.editable_text_layer.pptx`);
-    await exportDeckWithPreviews(
-      exact,
-      filePath,
-      path.join(outputDir, "preview"),
-      safeName(imageInfo.stem),
-    );
+    await writePresentation(exact, filePath);
   }
 
   const summary = {
     combined: combinedPath,
     perImageDir,
-    previewDir: path.join(outputDir, "preview"),
     images: regions.images.map((image) => ({
       name: image.name,
       width: image.width,
@@ -317,7 +258,6 @@ async function main() {
   await fs.writeFile(path.join(outputDir, "ppt_summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(`Combined PPTX: ${combinedPath}`);
   console.log(`Per-image PPTX: ${perImageDir}`);
-  console.log(`Preview dir:    ${summary.previewDir}`);
 }
 
 main().catch((error) => {

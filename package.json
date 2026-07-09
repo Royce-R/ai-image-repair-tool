@@ -1,0 +1,13 @@
+{
+  "name": "ai-image-repair-tool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first tool that converts raster images into editable PowerPoint repair templates and optional SVG exports.",
+  "type": "module",
+  "scripts": {
+    "check:pptx": "node --check tools/create_editable_text_pptx.mjs"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}
