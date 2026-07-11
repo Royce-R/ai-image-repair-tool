@@ -123,6 +123,7 @@ npm install
 - 如果觉得逐框 OCR 太慢，可以加 `-OcrStrategy image` 改用整图 OCR。
 - 如果不想 OCR，只想生成占位模板，可以加 `-OcrMode off`。
 - 如果检测框太少，可尝试调大 `-LineGap` 或 `-VerticalGap`。
+- 如果文字和边框、箭头线粘在一起导致漏检，可调 `-LineSuppressionLength`；默认 `0` 表示按图像尺寸自动抑制长直线，传负数可关闭。
 - 如果检测框太多，可尝试降低 `-DarkThreshold`、`-ColoredThreshold` 或 `-MaxBoxes`。
 
 ## 许可证

@@ -26,6 +26,9 @@ import numpy as np
 from raster_to_svg import IMAGE_EXTENSIONS, find_magick, guess_mime, identify_size, image_files, load_rgba
 
 
+OCR_EDGE_ARTIFACTS = "|丨｜¦"
+
+
 def dilate(mask: np.ndarray, radius_x: int, radius_y: int) -> np.ndarray:
     result = mask.copy()
     source = mask
@@ -69,6 +72,32 @@ def probable_ink_mask(
     dark = luma < dark_threshold
     colored_dark = (luma < colored_threshold) & (chroma > min_chroma) & (min_channel < 175)
     return alpha & (dark | colored_dark)
+
+
+def suppress_long_line_runs(mask: np.ndarray, min_length: int) -> np.ndarray:
+    if min_length <= 0:
+        return mask
+
+    result = mask.copy()
+    height, width = mask.shape
+
+    for y in range(height):
+        row = mask[y, :]
+        padded = np.concatenate(([False], row, [False]))
+        changes = np.flatnonzero(padded[1:] != padded[:-1])
+        for start, end in zip(changes[0::2], changes[1::2]):
+            if end - start >= min_length:
+                result[y, start:end] = False
+
+    for x in range(width):
+        column = mask[:, x]
+        padded = np.concatenate(([False], column, [False]))
+        changes = np.flatnonzero(padded[1:] != padded[:-1])
+        for start, end in zip(changes[0::2], changes[1::2]):
+            if end - start >= min_length:
+                result[start:end, x] = False
+
+    return result
 
 
 def component_boxes(group_mask: np.ndarray, ink_mask: np.ndarray) -> list[dict[str, float]]:
@@ -239,6 +268,41 @@ def estimate_char_count(width: float, font_size: float) -> int:
 def normalize_ocr_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text or "")
     return "".join(part for part in normalized.strip() if not part.isspace())
+
+
+def clean_ocr_candidate_text(text: str, fallback_glyph: str) -> str:
+    cleaned_lines: list[str] = []
+    for line in str(text or "").splitlines():
+        cleaned = line.strip().strip(OCR_EDGE_ARTIFACTS).strip()
+        if cleaned:
+            cleaned_lines.append(cleaned)
+    return "\n".join(cleaned_lines).strip() or quiet_template(1, fallback_glyph)
+
+
+def meaningful_ocr_char_count(text: str, fallback_glyph: str) -> int:
+    ignored = set(OCR_EDGE_ARTIFACTS)
+    ignored.add(fallback_glyph or "□")
+    return sum(1 for char in str(text or "") if not char.isspace() and char not in ignored)
+
+
+def ocr_candidate_score(text: str, confidence: float, fallback_glyph: str) -> float:
+    meaningful = meaningful_ocr_char_count(text, fallback_glyph)
+    fallback_count = str(text or "").count(fallback_glyph or "□")
+    if meaningful == 0:
+        return confidence - 1000.0
+    return confidence + min(meaningful, 20) * 2.0 - fallback_count * 20.0
+
+
+def is_weak_ocr_candidate(
+    text: str,
+    confidence: float,
+    *,
+    fallback_glyph: str,
+    min_confidence: float,
+) -> bool:
+    meaningful = meaningful_ocr_char_count(text, fallback_glyph)
+    fallback_count = str(text or "").count(fallback_glyph or "□")
+    return meaningful == 0 or fallback_count >= meaningful or confidence < min_confidence
 
 
 def parse_conf(value: str) -> float:
@@ -436,14 +500,29 @@ def crop_box_for_ocr(
     image_width: int,
     image_height: int,
     scale: int,
+    trim_edges: bool = False,
 ) -> bool:
     style = box.get("style", {})
     font_size = float(style.get("fontSize", box.get("fontSize", 12)))
-    ink = box.get("ink", box)
-    left = float(ink.get("left", box["left"]))
-    top = float(ink.get("top", box["top"]))
-    width = float(ink.get("width", box["width"]))
-    height = float(ink.get("height", box["height"]))
+    if trim_edges:
+        box_left = float(box["left"])
+        box_top = float(box["top"])
+        box_width = float(box["width"])
+        box_height = float(box["height"])
+        trim_left = min(box_width * 0.16, font_size * 0.45)
+        trim_top = min(box_height * 0.28, font_size * 0.45)
+        trim_right = min(box_width * 0.04, font_size * 0.12)
+        trim_bottom = min(box_height * 0.05, font_size * 0.10)
+        left = box_left + trim_left
+        top = box_top + trim_top
+        width = max(1.0, box_width - trim_left - trim_right)
+        height = max(1.0, box_height - trim_top - trim_bottom)
+    else:
+        ink = box.get("ink", box)
+        left = float(ink.get("left", box["left"]))
+        top = float(ink.get("top", box["top"]))
+        width = float(ink.get("width", box["width"]))
+        height = float(ink.get("height", box["height"]))
     pad_x = max(4.0, font_size * 0.28)
     pad_y = max(3.0, font_size * 0.22)
     x0 = int(clamp(np.floor(left - pad_x), 0, image_width))
@@ -502,7 +581,40 @@ def box_ocr_candidate(
         min_confidence=min_confidence,
         fallback_glyph=fallback_glyph,
     )
-    return text, average_confidence(tokens)
+    return clean_ocr_candidate_text(text, fallback_glyph), average_confidence(tokens)
+
+
+def best_box_ocr_candidate(
+    tesseract: str,
+    crop_path: Path,
+    *,
+    lang: str,
+    psms: list[int],
+    font_size: float,
+    ocr_scale: int,
+    min_confidence: float,
+    fallback_glyph: str,
+) -> tuple[str, float, float]:
+    best_text = ""
+    best_confidence = -1.0
+    best_score = -10_000.0
+    for psm in psms:
+        text, confidence = box_ocr_candidate(
+            tesseract,
+            crop_path,
+            lang=lang,
+            psm=psm,
+            font_size=font_size,
+            ocr_scale=ocr_scale,
+            min_confidence=min_confidence,
+            fallback_glyph=fallback_glyph,
+        )
+        score = ocr_candidate_score(text, confidence, fallback_glyph)
+        if text and score > best_score:
+            best_text = text
+            best_confidence = confidence
+            best_score = score
+    return best_text, best_confidence, best_score
 
 
 def attach_box_ocr_text(
@@ -540,24 +652,55 @@ def attach_box_ocr_text(
 
             style = box.setdefault("style", {})
             font_size = float(style.get("fontSize", box.get("fontSize", 12)))
-            best_text = ""
-            best_confidence = -1.0
-            for psm in psms:
-                text, confidence = box_ocr_candidate(
-                    tesseract,
-                    crop_path,
-                    lang=lang,
-                    psm=psm,
-                    font_size=font_size,
-                    ocr_scale=ocr_scale,
-                    min_confidence=min_confidence,
-                    fallback_glyph=fallback_glyph,
-                )
-                if text and confidence > best_confidence:
-                    best_text = text
-                    best_confidence = confidence
+            best_text, best_confidence, best_score = best_box_ocr_candidate(
+                tesseract,
+                crop_path,
+                lang=lang,
+                psms=psms,
+                font_size=font_size,
+                ocr_scale=ocr_scale,
+                min_confidence=min_confidence,
+                fallback_glyph=fallback_glyph,
+            )
 
-            if not best_text:
+            if is_weak_ocr_candidate(
+                best_text,
+                best_confidence,
+                fallback_glyph=fallback_glyph,
+                min_confidence=min_confidence,
+            ):
+                trimmed_crop_path = temp_root / f"box_{index:04d}.trimmed.png"
+                if crop_box_for_ocr(
+                    magick,
+                    image_path,
+                    box,
+                    trimmed_crop_path,
+                    image_width=image_width,
+                    image_height=image_height,
+                    scale=ocr_scale,
+                    trim_edges=True,
+                ):
+                    trimmed_text, trimmed_confidence, trimmed_score = best_box_ocr_candidate(
+                        tesseract,
+                        trimmed_crop_path,
+                        lang=lang,
+                        psms=psms,
+                        font_size=font_size,
+                        ocr_scale=ocr_scale,
+                        min_confidence=min_confidence,
+                        fallback_glyph=fallback_glyph,
+                    )
+                    if trimmed_text and trimmed_score > best_score:
+                        best_text = trimmed_text
+                        best_confidence = trimmed_confidence
+                        best_score = trimmed_score
+
+            if not best_text or is_weak_ocr_candidate(
+                best_text,
+                best_confidence,
+                fallback_glyph=fallback_glyph,
+                min_confidence=min_confidence,
+            ):
                 continue
 
             box["ocrText"] = best_text
@@ -583,11 +726,13 @@ def is_probable_text_box(
     area = width * height
     if width < min_width or height < min_height:
         return False
+    if width < 18 and height < 18:
+        return False
     if height > max_height:
         return False
     if area > image_width * image_height * 0.08 and height > image_height * 0.08:
         return False
-    if height > 42 and box["top"] > image_height * 0.16 and width > 70:
+    if height > 58 and box["top"] > image_height * 0.16 and width > 70:
         return False
 
     aspect = width / max(height, 1)
@@ -844,6 +989,25 @@ def styled_and_clamped(
 
 
 def is_probable_edit_region(box: dict[str, float], *, image_height: int) -> bool:
+    width = float(box.get("width", 0))
+    height = float(box.get("height", 0))
+    area = width * height
+    if width < 18 and height < 18:
+        return False
+    if area < 700 and width < 26 and height < 24:
+        return False
+
+    ink = box.get("ink", {})
+    if isinstance(ink, dict):
+        ink_width = float(ink.get("width", width))
+        ink_height = float(ink.get("height", height))
+        if ink_width < 16 and ink_height < 16:
+            return False
+
+    ink_density = float(box.get("inkDensity", 0))
+    if width > 120 and height < 24 and ink_density < 0.16:
+        return False
+
     style = box.get("style", {})
     text_color = str(style.get("textColor", "#000000")).lstrip("#")
     if len(text_color) != 6:
@@ -855,7 +1019,7 @@ def is_probable_edit_region(box: dict[str, float], *, image_height: int) -> bool
     font_size = float(style.get("fontSize", box.get("fontSize", 0)))
 
     below_header = box["top"] > image_height * 0.20
-    if below_header and font_size > 38:
+    if below_header and font_size > 44:
         return False
     looks_like_colored_icon = chroma > 45 and font_size > 22 and box["width"] < 150
     looks_like_single_large_mark = font_size > 30 and box["width"] < 90 and below_header
@@ -1003,6 +1167,7 @@ def detect_boxes(
     pad_y: float,
     max_boxes: int,
     fallback_glyph: str,
+    line_suppression_length: int,
 ) -> list[dict[str, float]]:
     height, width = rgba.shape[:2]
     ink = probable_ink_mask(
@@ -1012,6 +1177,10 @@ def detect_boxes(
         min_chroma=min_chroma,
         alpha_threshold=alpha_threshold,
     )
+    effective_line_suppression_length = line_suppression_length
+    if effective_line_suppression_length == 0:
+        effective_line_suppression_length = int(max(28, min(80, round(min(height, width) * 0.05))))
+    ink = suppress_long_line_runs(ink, effective_line_suppression_length)
     grouped = dilate(ink, line_gap, vertical_gap)
     raw_boxes = component_boxes(grouped, ink)
     split_boxes = [
@@ -1082,6 +1251,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pad-x", type=float, default=2.0)
     parser.add_argument("--pad-y", type=float, default=1.0)
     parser.add_argument("--max-boxes", type=int, default=260)
+    parser.add_argument(
+        "--line-suppression-length",
+        type=int,
+        default=0,
+        help="Remove horizontal/vertical ink runs at least this long before grouping. Use 0 for auto.",
+    )
     parser.add_argument("--ocr-mode", choices=["auto", "off", "tesseract"], default="auto")
     parser.add_argument("--ocr-strategy", choices=["box", "image", "both"], default="box")
     parser.add_argument("--tesseract", default=None)
@@ -1120,6 +1295,7 @@ def main() -> int:
             "coloredThreshold": args.colored_threshold,
             "lineGap": args.line_gap,
             "verticalGap": args.vertical_gap,
+            "lineSuppressionLength": args.line_suppression_length,
             "ocrMode": args.ocr_mode,
             "ocrStrategy": args.ocr_strategy,
             "ocrEngine": "tesseract" if tesseract else "none",
@@ -1172,6 +1348,7 @@ def main() -> int:
             pad_y=args.pad_y,
             max_boxes=args.max_boxes,
             fallback_glyph=args.fallback_glyph,
+            line_suppression_length=args.line_suppression_length,
         )
         if tesseract and args.ocr_strategy in {"image", "both"}:
             ocr_tokens = run_tesseract_tsv(

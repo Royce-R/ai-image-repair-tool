@@ -135,6 +135,13 @@ If the detector misses text, try wider grouping:
 .\convert_images_to_editable_ppt.ps1 -LineGap 10 -VerticalGap 2
 ```
 
+If labels are connected to boxes, arrows, or table rules, tune long-line
+suppression:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -LineSuppressionLength 40 -DebugPreview
+```
+
 If it creates too many boxes, make detection stricter:
 
 ```powershell

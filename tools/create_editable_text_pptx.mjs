@@ -4,6 +4,8 @@ import path from "node:path";
 import pptxgen from "pptxgenjs";
 
 const PX_PER_INCH = 96;
+const POINTS_PER_INCH = 72;
+const PX_TO_POINTS = POINTS_PER_INCH / PX_PER_INCH;
 const SLIDE_BACKGROUND = "F8FAFC";
 
 function parseArgs(argv) {
@@ -89,6 +91,32 @@ function resolvePlaceholder(box, options) {
   return options.placeholder;
 }
 
+function textWidthUnits(text) {
+  let units = 0;
+  for (const char of String(text ?? "")) {
+    if (/\s/u.test(char)) {
+      continue;
+    }
+    if (/[\u3400-\u9fff]/u.test(char)) {
+      units += 1;
+    } else if (/[A-Za-z0-9]/u.test(char)) {
+      units += 0.58;
+    } else {
+      units += 0.45;
+    }
+  }
+  return Math.max(units, 1);
+}
+
+function fittedFontSize(style, box, textPosition, text, frameScale) {
+  const sourceFontPx = style.fontSize ?? box.fontSize ?? 12;
+  const baseSize = sourceFontPx * frameScale * PX_TO_POINTS;
+  const widthPoints = pointsToInches(textPosition.width) * POINTS_PER_INCH;
+  const widthLimited = (widthPoints / textWidthUnits(text)) * 1.05;
+  const heightLimited = pointsToInches(textPosition.height) * POINTS_PER_INCH * 0.88;
+  return Math.max(5, Math.min(72, baseSize, widthLimited, heightLimited));
+}
+
 function createPresentation(slideSize) {
   const pptx = new pptxgen();
   const layoutName = `CUSTOM_${Math.round(slideSize.width)}_${Math.round(slideSize.height)}`;
@@ -157,10 +185,10 @@ async function addRepairSlide(pptx, imageInfo, slideSize, options) {
     }
 
     const textPosition = transformBox(box, frame);
-    const fontSize = Math.max(5, Math.min(72, (style.fontSize ?? box.fontSize ?? 12) * frame.scale));
     const textColor = options.useSampledStyle ? color(style.textColor, color(options.placeholderColor, "DC2626")) : color(options.placeholderColor, "DC2626");
     const guideColor = color(options.guideColor, "2563EB");
     const text = resolvePlaceholder(box, options) || "□";
+    const fontSize = fittedFontSize(style, box, textPosition, text, frame.scale);
     slide.addText(text, {
       ...pptPosition(textPosition),
       margin: 0,

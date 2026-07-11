@@ -24,6 +24,7 @@ param(
     [int]$ColoredThreshold = 168,
     [int]$LineGap = 6,
     [int]$VerticalGap = 1,
+    [int]$LineSuppressionLength = 0,
     [int]$MaxBoxes = 260,
     [ValidateSet("auto", "off", "tesseract")]
     [string]$OcrMode = "auto",
@@ -376,6 +377,7 @@ function Invoke-PptWorkflow {
         ColoredThreshold = $ColoredThreshold
         LineGap = $LineGap
         VerticalGap = $VerticalGap
+        LineSuppressionLength = $LineSuppressionLength
         MaxBoxes = $MaxBoxes
         GuideColor = $GuideColor
         GuideWidth = $effectiveGuideWidth

@@ -24,3 +24,4 @@ node_modules/
 # Temporary files
 *.tmp
 *.log
+tmp_*/
