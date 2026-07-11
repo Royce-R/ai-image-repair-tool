@@ -32,7 +32,7 @@ To create a distributable zip:
 .\package_tool.ps1
 ```
 
-## Best option for PowerPoint repair
+## Best option for editable PowerPoint text correction
 
 For manual PowerPoint editing, use the main entry point:
 
@@ -41,8 +41,8 @@ For manual PowerPoint editing, use the main entry point:
 ```
 
 The main entry point creates reference slides by default: each image is followed
-by an editable repair slide in the same PPTX, so you do not need to remember an
-extra `-ReferenceSlides` option.
+by an editable text-correction slide in the same PPTX, so you do not need to
+remember an extra `-ReferenceSlides` option.
 
 For low-level testing, use the editable PPTX workflow directly:
 
@@ -235,6 +235,6 @@ Notes:
 
 - The traced SVG is an approximation. Text inside AI-generated images becomes vector shapes, not editable text.
 - The embedded SVG is visually exact, but it still contains the raster image.
-- For PowerPoint text repair, prefer `convert_images_to_editable_ppt.ps1` over traced SVG.
+- For editable PowerPoint text correction, prefer `convert_images_to_editable_ppt.ps1` over traced SVG.
 - The script uses ImageMagick for decoding, so an image can still work even when its extension is wrong.
 - On this machine the wrapper prefers `D:\conda\miniconda3\python.exe` and auto-detects ImageMagick.

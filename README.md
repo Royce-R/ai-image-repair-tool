@@ -1,6 +1,12 @@
-# AI 图片修复工具
+# AI 生成图中文错字修正（可编辑 PPT）
 
-这个工具用于把 AI 生成的图片批量转换成可在 PowerPoint 里手动修复的模板，并可选导出 SVG。它会尽量检测图片里的文字区域并调用 OCR 识别原文；识别不出来的位置用 `□` 这类安静占位符补足，方便你在 PPT 中按原图手动改字。
+Fix wrong/missing Chinese characters in AI-generated images via editable PowerPoint.
+
+把 AI 生成图片里的中文错字、漏字、别字，转成可在 PowerPoint 里对照原图手动改正的可编辑模板。工具会检测文字区域、执行 OCR，并生成可编辑 PPT 文本框，方便你完成 OCR 后人工校对和改字补字。
+
+本工具不是 AI 修图/重绘，不做 image inpainting、photo restoration、去模糊或超分，也不会自动替你改正文字；它生成可编辑文字层，让你在 PowerPoint 里对照原图手动修正 wrong/missing Chinese characters。
+
+适用场景：AI 生成图片、海报、标题图、说明文字中出现的中文错字、漏字、别字，需要保留原图视觉并用 editable PowerPoint text boxes 手动校对。
 
 ## 快速开始
 
@@ -112,8 +118,8 @@
 
 打包结果：
 
-- `dist/ai-image-repair-tool/`
-- `dist/ai-image-repair-tool.zip`
+- `dist/ai-image-chinese-text-fix-pptx/`
+- `dist/ai-image-chinese-text-fix-pptx.zip`
 
 把 zip 解压后，用户在解压目录里运行 `ImageRepairTool.ps1` 即可。
 
@@ -139,7 +145,7 @@ npm install
 
 - `resource/` 是本地输入目录，已被 `.gitignore` 忽略；不要把没有授权、含隐私或可能侵权的图片提交到公开仓库。
 - OCR 是尽力识别，不保证完全正确，尤其是 AI 生成的小字、错字和复杂背景。
-- `cleaned` 底图是基于检测区域和背景色采样生成的，不是真正的智能修图。
+- `cleaned` 底图是基于检测区域和背景色采样生成的，不是真正的 AI 修图、重绘或通用照片修复。
 - 复杂背景、装饰图标或非常小的文字可能会误检或漏检，需要在 PPT 中手动调整。
 - 如果觉得逐框 OCR 太慢，可以加 `-OcrStrategy image` 改用整图 OCR。
 - 如果不想 OCR，只想生成占位模板，可以加 `-OcrMode off`。

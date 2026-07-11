@@ -1,8 +1,8 @@
 {
-  "name": "ai-image-repair-tool",
+  "name": "ai-image-chinese-text-fix-pptx",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first tool that converts raster images into editable PowerPoint repair templates and optional SVG exports.",
+  "description": "Editable PPT templates for fixing wrong/missing Chinese text in AI-generated images (not AI photo repair).",
   "type": "module",
   "scripts": {
     "check:pptx": "node --check tools/create_editable_text_pptx.mjs"

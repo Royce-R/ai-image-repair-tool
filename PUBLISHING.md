@@ -4,25 +4,25 @@ This note is for preparing this repository as a public GitHub project.
 
 ## Recommended repository name
 
-Use `ai-image-repair-tool`.
+Use `ai-image-chinese-text-fix-pptx`.
 
 Why this name works:
 
-- It matches the existing package name in `package_tool.ps1`.
 - It is short enough to remember.
-- It describes the actual workflow: repair an AI-generated or raster image by creating an editable PowerPoint template.
-- It does not overpromise full automatic design reconstruction.
+- It puts the real lane in the name: AI image, Chinese text, editable PPTX.
+- It avoids the misleading generic AI photo repair/restoration category.
+- It does not overpromise automatic text correction or image reconstruction.
 
 Alternative names if the first choice is unavailable:
 
-- `editable-image-repair-pptx`
-- `image-to-editable-ppt-template`
-- `ppt-image-text-repair`
-- `local-image-to-pptx-repair`
+- `ai-image-text-fix-pptx`
+- `ai-generated-chinese-text-pptx`
+- `chinese-ocr-editable-pptx`
+- `ai-generated-image-ppt-text-correction`
 
-Suggested GitHub description:
+Suggested GitHub About:
 
-> Local-first tool that converts raster images into PowerPoint repair templates with detected editable text layers, OCR placeholders, cleaned base images, and optional SVG export.
+> Editable PPT templates for fixing wrong/missing Chinese text in AI-generated images (not AI photo repair).
 
 ## Similar projects found
 
@@ -38,8 +38,8 @@ The closest GitHub projects I found are:
 
 This repository should avoid looking like a clone by emphasizing its own lane:
 
-- Local-first PowerShell workflow instead of a browser app or cloud-first AI pipeline.
-- Designed for manual PowerPoint repair, not fully automatic perfect reconstruction.
+- Local-first PowerShell workflow for AI-generated images with Chinese text errors.
+- Designed for manual Chinese text correction in editable PowerPoint, not image inpainting or photo restoration.
 - Supports reference slides, cleaned base images, and predictable PowerPoint Selection Pane layer names.
 - Can run OCR as best effort, but can also generate quiet placeholders with OCR disabled.
 - Includes optional embedded/traced SVG export in the same workflow.
@@ -82,17 +82,17 @@ If GitHub CLI is available:
 
 ```powershell
 gh auth login
-gh repo create ai-image-repair-tool --public --source . --remote origin --push
+gh repo create ai-image-chinese-text-fix-pptx --public --source . --remote origin --push
 ```
 
 If using the GitHub website:
 
-1. Create a new public repository named `ai-image-repair-tool`.
+1. Create a new public repository named `ai-image-chinese-text-fix-pptx`.
 2. Do not add a README, license, or `.gitignore` on GitHub because this repository already has them.
 3. Add the remote locally:
 
 ```powershell
-git remote add origin https://github.com/<your-user>/ai-image-repair-tool.git
+git remote add origin https://github.com/<your-user>/ai-image-chinese-text-fix-pptx.git
 git push -u origin master
 ```
 
@@ -104,12 +104,14 @@ Add these GitHub topics:
 
 - `powerpoint`
 - `pptx`
+- `ai-generated-images`
+- `chinese-ocr`
+- `text-correction`
 - `ocr`
 - `tesseract`
 - `svg`
-- `raster-to-svg`
-- `image-repair`
 - `editable-pptx`
+- `ai-image-text-fix`
 - `powershell`
 
 ## Release checklist
@@ -123,4 +125,3 @@ Before the first public release:
 5. Run `package_tool.ps1` and confirm the zip does not include input images.
 6. Push only the intended branch with `git push -u origin master`.
 7. Create a GitHub release only after downloading the zip locally and checking its contents.
-

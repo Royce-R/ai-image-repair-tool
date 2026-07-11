@@ -1,6 +1,6 @@
 param(
     [string]$DistDir = ".\dist",
-    [string]$PackageName = "ai-image-repair-tool"
+    [string]$PackageName = "ai-image-chinese-text-fix-pptx"
 )
 
 $ErrorActionPreference = "Stop"
