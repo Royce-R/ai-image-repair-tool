@@ -39,7 +39,7 @@
 如果不指定 `-Output`，结果会自动放进 `results/时间_图片名/`。完成后先打开：
 
 - `START_HERE.txt`：告诉你应该先打开哪个文件。
-- 单图输入默认生成 `editable_template.pptx`。
+- 单图输入默认生成 `editable_template.pptx`，里面先是原图参考页，再是可编辑页。
 - 多图输入默认生成 `combined_editable_text_layer.pptx` 和 `editable_pptx/`。
 
 ## 输出模式
@@ -70,7 +70,7 @@
 
 ## PowerPoint 编辑方式
 
-推荐使用 `-ReferenceSlides`。每张源图会生成两页：
+默认每张源图会生成两页：
 
 - 原图参考页：只放原始图片，用来查看原文。
 - 可编辑页：包含 `01_original_reference`、`02_cleaned_text_removed` 和 `03_text_001...` 图层。
@@ -90,7 +90,7 @@
 
 调参时再看这些：
 
-- `-ReferenceSlides`：为每张图额外生成原图参考页。
+- `-NoReferenceSlides`：不生成原图参考页，只保留可编辑页。
 - `-DebugPreview`：生成带检测框的 SVG 预览。
 - `-TemplateMode dual|mimic|guide`：PPT 模板模式，默认 `dual`。
 - `-Placeholder "文字"`：设置文本框占位文字。

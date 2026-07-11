@@ -40,6 +40,10 @@ For manual PowerPoint editing, use the main entry point:
 .\ImageRepairTool.ps1 -Input .\resource
 ```
 
+The main entry point creates reference slides by default: each image is followed
+by an editable repair slide in the same PPTX, so you do not need to remember an
+extra `-ReferenceSlides` option.
+
 For low-level testing, use the editable PPTX workflow directly:
 
 ```powershell
@@ -80,10 +84,10 @@ PowerPoint slide automatically keeps the original image visible and adds blue
 editable-box guides instead of covering text with a cleaned white base. Use
 `-OcrMode tesseract` to force OCR anyway.
 
-### Recommended when you need to read the original words
+### Low-level reference slides
 
-If the placeholder boxes cover the original words while you are comparing layers,
-generate paired slides:
+The lower-level script keeps its original behavior. If you call it directly and
+want paired reference/edit slides, pass:
 
 ```powershell
 .\convert_images_to_editable_ppt.ps1 -ReferenceSlides

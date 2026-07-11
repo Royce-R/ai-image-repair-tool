@@ -16,6 +16,7 @@ param(
     [string]$TemplateMode = "dual",
 
     [switch]$ReferenceSlides,
+    [switch]$NoReferenceSlides,
     [switch]$DebugPreview,
     [string]$Placeholder = "__AUTO__",
     [switch]$AutoPlaceholder,
@@ -59,6 +60,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $script:EffectiveDebugPreview = $DebugPreview -or ($OutputProfile -in @("debug", "full"))
+$script:EffectiveReferenceSlides = $ReferenceSlides -or (-not $NoReferenceSlides)
 
 $ImageExtensions = @(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
 $MagickCandidates = @(
@@ -77,6 +79,7 @@ Simple use:
   .\ImageRepairTool.ps1 "image.png"
   .\ImageRepairTool.ps1 -Input "image.png"
   .\ImageRepairTool.ps1 -Input ".\resource" -Output ".\output"
+  Default PPT output includes an original reference slide and an editable slide.
 
 Common modes:
   -Check                         Check dependencies only.
@@ -87,6 +90,7 @@ Common modes:
   -Target ppt|svg|both           Generate editable PPTX, SVG, or both.
 
 Useful only when tuning:
+  -NoReferenceSlides              Skip the original-image reference slides.
   -OcrMode off                   Disable OCR and use placeholders.
   -OcrMode tesseract             Force OCR even on dense images.
   -OcrMaxBoxes 60                Auto-skip OCR on dense images above this count.
@@ -376,6 +380,7 @@ function Resolve-ImageInput {
             TempDir = $null
             ImageCount = $summary.ImageCount
             Label = $label
+            SourcePath = $summary.Path
         }
     }
 
@@ -388,6 +393,7 @@ function Resolve-ImageInput {
         TempDir = $tempDir
         ImageCount = 1
         Label = (ConvertTo-SafePathName -Name $sourceItem.BaseName)
+        SourcePath = $sourceItem.FullName
     }
 }
 
@@ -460,7 +466,7 @@ function Invoke-PptWorkflow {
         Magick = $Magick
     }
 
-    if ($ReferenceSlides) {
+    if ($script:EffectiveReferenceSlides) {
         $params.ReferenceSlides = $true
     }
     if ($script:EffectiveDebugPreview) {
@@ -527,6 +533,16 @@ function Publish-PptResults {
     $debugFiles = @()
     $combined = Join-Path $PptOutput "combined_editable_text_layer.pptx"
     $perImageDir = Join-Path $PptOutput "per_image"
+    $summaryPath = Join-Path $PptOutput "ppt_summary.json"
+    $pptSummary = $null
+    if (Test-Path -LiteralPath $summaryPath) {
+        try {
+            $pptSummary = Get-Content -Raw -LiteralPath $summaryPath | ConvertFrom-Json
+        }
+        catch {
+            Write-Host "Warning: could not read PPT summary: $($_.Exception.Message)"
+        }
+    }
 
     if ($OutputProfile -eq "simple") {
         if ($InputInfo.ImageCount -eq 1 -and (Test-Path $perImageDir)) {
@@ -578,7 +594,25 @@ function Publish-PptResults {
     return @{
         PrimaryFiles = $primaryFiles
         DebugFiles = $debugFiles
+        Summary = $pptSummary
     }
+}
+
+function Format-CommandPath {
+    param([string]$Path)
+
+    return '"' + ([string]$Path).Replace('"', '\"') + '"'
+}
+
+function New-SuggestedOutputPath {
+    param(
+        [string]$OutputRoot,
+        [string]$Suffix
+    )
+
+    $parent = Split-Path -Parent $OutputRoot
+    $leaf = Split-Path -Leaf $OutputRoot
+    return Join-Path $parent ($leaf + $Suffix)
 }
 
 function Write-StartHere {
@@ -586,13 +620,15 @@ function Write-StartHere {
         [string]$OutputRoot,
         [array]$PrimaryFiles,
         [array]$DebugFiles,
-        [array]$SvgPaths
+        [array]$SvgPaths,
+        [object]$PptSummary,
+        [hashtable]$InputInfo
     )
 
     $lines = @(
         "AI Image Repair Tool results",
         "",
-        "Open these first:"
+        "1. Open first:"
     )
 
     if ($PrimaryFiles.Count -eq 0 -and $SvgPaths.Count -eq 0) {
@@ -605,6 +641,36 @@ function Write-StartHere {
         $lines += "  $path"
     }
 
+    if ($PrimaryFiles.Count -gt 0) {
+        $lines += ""
+        $lines += "2. Edit in PowerPoint:"
+        if ($script:EffectiveReferenceSlides) {
+            $lines += "  Each image has a reference slide first, then an editable slide."
+        }
+        else {
+            $lines += "  Each slide is an editable repair page."
+        }
+        $lines += "  Click recognized text, placeholder text, or blue guide boxes and type the corrected text."
+        $lines += "  Selection Pane layers use names like 01_original_reference, 02_cleaned_text_removed, and 03_text_001."
+        $lines += "  If there is no 02_cleaned_text_removed layer and the original text is still visible, dense-image guide mode is active."
+    }
+
+    if ($null -ne $PptSummary -and $null -ne $PptSummary.images) {
+        $lines += ""
+        $lines += "3. What this run detected:"
+        foreach ($image in @($PptSummary.images)) {
+            $mode = [string]$image.templateMode
+            if ([string]::IsNullOrWhiteSpace($mode)) {
+                $mode = $TemplateMode
+            }
+            $ocrNote = ""
+            if ($null -ne $image.ocrSkipped -and -not [string]::IsNullOrWhiteSpace([string]$image.ocrSkipped)) {
+                $ocrNote = ", OCR skipped"
+            }
+            $lines += "  $($image.name): $($image.textBoxes) text box(es), mode=$mode$ocrNote"
+        }
+    }
+
     if ($DebugFiles.Count -gt 0) {
         $lines += ""
         $lines += "Debug previews:"
@@ -614,12 +680,18 @@ function Write-StartHere {
     }
 
     $lines += ""
-    $lines += "Profiles:"
-    $lines += "  simple: final files only. Default."
-    $lines += "  debug: keep detection previews and intermediate files."
-    $lines += "  full: keep every generated artifact."
-    $lines += ""
-    $lines += "Run .\ImageRepairTool.ps1 -Help for examples."
+    $lines += "4. If the result needs tuning:"
+    $inputPath = [string]$InputInfo.SourcePath
+    if ([string]::IsNullOrWhiteSpace($inputPath)) {
+        $inputPath = [string]$Source
+    }
+    $debugOutput = New-SuggestedOutputPath -OutputRoot $OutputRoot -Suffix "_debug"
+    $ocrOutput = New-SuggestedOutputPath -OutputRoot $OutputRoot -Suffix "_ocr"
+    $lines += "  See detection boxes:"
+    $lines += "    .\ImageRepairTool.ps1 " + (Format-CommandPath -Path $inputPath) + " -Output " + (Format-CommandPath -Path $debugOutput) + " -OutputProfile debug"
+    $lines += "  Force OCR on dense images:"
+    $lines += "    .\ImageRepairTool.ps1 " + (Format-CommandPath -Path $inputPath) + " -Output " + (Format-CommandPath -Path $ocrOutput) + " -OcrMode tesseract"
+    $lines += "  Run .\ImageRepairTool.ps1 -Help for more options."
 
     $startHere = Join-Path $OutputRoot "START_HERE.txt"
     Set-Content -LiteralPath $startHere -Value $lines -Encoding UTF8
@@ -683,6 +755,7 @@ $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $Out
 $primaryFiles = @()
 $debugFiles = @()
 $svgPaths = @()
+$pptSummary = $null
 
 try {
     if ($Target -eq "ppt" -or $Target -eq "both") {
@@ -693,6 +766,7 @@ try {
         $pptResults = Publish-PptResults -PptOutput $pptOutput -OutputRoot $outputPath -InputInfo $inputInfo
         $primaryFiles += $pptResults.PrimaryFiles
         $debugFiles += $pptResults.DebugFiles
+        $pptSummary = $pptResults.Summary
         Write-Host "PPT output ready."
     }
 
@@ -705,7 +779,7 @@ try {
         Write-Host "SVG output: $svgOutput"
     }
 
-    $startHere = Write-StartHere -OutputRoot $outputPath -PrimaryFiles $primaryFiles -DebugFiles $debugFiles -SvgPaths $svgPaths
+    $startHere = Write-StartHere -OutputRoot $outputPath -PrimaryFiles $primaryFiles -DebugFiles $debugFiles -SvgPaths $svgPaths -PptSummary $pptSummary -InputInfo $inputInfo
     Write-Host "Start here: $startHere"
     foreach ($file in $primaryFiles) {
         Write-Host "Result: $file"
