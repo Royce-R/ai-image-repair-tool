@@ -635,9 +635,14 @@ def attach_box_ocr_text(
         return 0
 
     updated = 0
+    total_boxes = len(boxes)
+    if total_boxes:
+        print(f"OCR boxes: 0/{total_boxes}", flush=True)
     with tempfile.TemporaryDirectory(prefix="image_repair_ocr_") as temp_dir:
         temp_root = Path(temp_dir)
         for index, box in enumerate(boxes, start=1):
+            if index == 1 or index == total_boxes or index % 10 == 0:
+                print(f"OCR boxes: {index}/{total_boxes}", flush=True)
             crop_path = temp_root / f"box_{index:04d}.png"
             if not crop_box_for_ocr(
                 magick,
@@ -1265,6 +1270,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ocr-box-psm", default="13,7")
     parser.add_argument("--ocr-scale", type=int, default=3)
     parser.add_argument("--ocr-min-confidence", type=float, default=45.0)
+    parser.add_argument(
+        "--ocr-max-boxes",
+        type=int,
+        default=60,
+        help="In auto OCR mode, skip OCR when an image has more text boxes than this. Use 0 for no auto-skip.",
+    )
     parser.add_argument("--fallback-glyph", default="□")
     parser.add_argument("--debug-dir", default=None)
     return parser.parse_args()
@@ -1304,6 +1315,7 @@ def main() -> int:
             "ocrBoxPsm": ocr_box_psms,
             "ocrScale": args.ocr_scale,
             "ocrMinConfidence": args.ocr_min_confidence,
+            "ocrMaxBoxes": args.ocr_max_boxes,
             "fallbackGlyph": args.fallback_glyph,
             "note": "Regions are likely text lines for manual editing; OCR text is best-effort.",
         },
@@ -1323,7 +1335,8 @@ def main() -> int:
     else:
         print("OCR:    unavailable; using quiet placeholders")
 
-    for source in sources:
+    for source_index, source in enumerate(sources, start=1):
+        print(f"Processing {source_index}/{len(sources)}: {source.name}", flush=True)
         original_width, original_height = identify_size(magick, source)
         rgba, _trace_size = load_rgba(
             magick,
@@ -1350,9 +1363,24 @@ def main() -> int:
             fallback_glyph=args.fallback_glyph,
             line_suppression_length=args.line_suppression_length,
         )
-        if tesseract and args.ocr_strategy in {"image", "both"}:
+        image_tesseract = tesseract
+        ocr_skip_reason = None
+        if (
+            image_tesseract
+            and args.ocr_mode == "auto"
+            and args.ocr_max_boxes > 0
+            and len(boxes) > args.ocr_max_boxes
+        ):
+            ocr_skip_reason = (
+                f"skipped because {len(boxes)} text boxes were detected "
+                f"(auto limit {args.ocr_max_boxes}); use -OcrMode tesseract to force OCR"
+            )
+            image_tesseract = None
+            print(f"OCR skipped for {source.name}: {ocr_skip_reason}", flush=True)
+
+        if image_tesseract and args.ocr_strategy in {"image", "both"}:
             ocr_tokens = run_tesseract_tsv(
-                tesseract,
+                image_tesseract,
                 source,
                 lang=args.ocr_lang,
                 psm=args.ocr_psm,
@@ -1373,10 +1401,10 @@ def main() -> int:
                 engine="none",
             )
 
-        if tesseract and args.ocr_strategy in {"box", "both"}:
+        if image_tesseract and args.ocr_strategy in {"box", "both"}:
             attach_box_ocr_text(
                 magick,
-                tesseract,
+                image_tesseract,
                 source,
                 boxes,
                 image_width=original_width,
@@ -1398,6 +1426,8 @@ def main() -> int:
             "height": original_height,
             "textBoxes": boxes,
         }
+        if ocr_skip_reason:
+            image_payload["ocrSkipped"] = ocr_skip_reason
         debug_path = None
         if debug_dir is not None:
             debug_path = debug_dir / f"{source.stem}.detected_boxes.svg"
@@ -1412,10 +1442,10 @@ def main() -> int:
         payload["images"].append(image_payload)
         ocr_count = sum(1 for box in boxes if box.get("ocrText"))
         debug_note = f", debug={debug_path.name}" if debug_path is not None else ""
-        print(f"{source.name}: {len(boxes)} text box(es), ocr={ocr_count}, cleaned={cleaned_path.name}{debug_note}")
+        print(f"{source.name}: {len(boxes)} text box(es), ocr={ocr_count}, cleaned={cleaned_path.name}{debug_note}", flush=True)
 
     output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("Finished text-region detection.")
+    print("Finished text-region detection.", flush=True)
     return 0
 
 

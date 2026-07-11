@@ -70,6 +70,12 @@ def box_desc(index: int, box: dict[str, object]) -> str:
     )
 
 
+def effective_template_mode(image: dict[str, object], requested: str) -> str:
+    if requested == "dual" and image.get("ocrSkipped"):
+        return "guide"
+    return requested
+
+
 def rename_reference_slide(data: bytes, image: dict[str, object]) -> bytes:
     root = ET.fromstring(data)
     stem = safe_name(str(image.get("stem", "image")))
@@ -86,14 +92,20 @@ def rename_reference_slide(data: bytes, image: dict[str, object]) -> bytes:
 def rename_repair_slide(data: bytes, image: dict[str, object], template_mode: str) -> bytes:
     root = ET.fromstring(data)
     stem = safe_name(str(image.get("stem", "image")))
+    effective_mode = effective_template_mode(image, template_mode)
     pictures = root.findall(".//p:pic", NS)
     if pictures:
+        description = f"Original source image for {stem}."
+        if effective_mode == "dual" and len(pictures) > 1:
+            description = f"Original source image for {stem}. Hide the cleaned layer to compare wording."
+        elif image.get("ocrSkipped"):
+            description = f"Original source image for {stem}. OCR was skipped for this dense image, so original text stays visible."
         rename_c_nv_pr(
             pictures[0],
             "01_original_reference",
-            f"Original source image for {stem}. Hide the cleaned layer to compare wording.",
+            description,
         )
-    if template_mode == "dual" and len(pictures) > 1:
+    if effective_mode == "dual" and len(pictures) > 1:
         rename_c_nv_pr(
             pictures[1],
             "02_cleaned_text_removed",

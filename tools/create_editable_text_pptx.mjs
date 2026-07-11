@@ -91,6 +91,34 @@ function resolvePlaceholder(box, options) {
   return options.placeholder;
 }
 
+function hasOcrSkipped(imageInfo) {
+  return typeof imageInfo.ocrSkipped === "string" && imageInfo.ocrSkipped.trim().length > 0;
+}
+
+function effectiveTemplateMode(imageInfo, options) {
+  if (options.templateMode === "dual" && hasOcrSkipped(imageInfo)) {
+    return "guide";
+  }
+  return options.templateMode;
+}
+
+function effectiveGuideWidth(imageInfo, templateMode, options) {
+  if (templateMode === "guide" && hasOcrSkipped(imageInfo) && options.guideWidth <= 0) {
+    return 0.75;
+  }
+  return options.guideWidth;
+}
+
+function effectivePlaceholder(box, imageInfo, options) {
+  if (
+    hasOcrSkipped(imageInfo)
+    && (options.placeholder === "__AUTO__" || options.placeholder === "__OCR__")
+  ) {
+    return " ";
+  }
+  return resolvePlaceholder(box, options) || "□";
+}
+
 function textWidthUnits(text) {
   let units = 0;
   for (const char of String(text ?? "")) {
@@ -157,6 +185,8 @@ async function addReferenceSlide(pptx, imageInfo, slideSize) {
 async function addRepairSlide(pptx, imageInfo, slideSize, options) {
   const slide = addSlide(pptx);
   const frame = fitContain(imageInfo.width, imageInfo.height, slideSize.width, slideSize.height);
+  const templateMode = effectiveTemplateMode(imageInfo, options);
+  const guideWidth = effectiveGuideWidth(imageInfo, templateMode, options);
   const imagePosition = {
     left: frame.left,
     top: frame.top,
@@ -167,14 +197,14 @@ async function addRepairSlide(pptx, imageInfo, slideSize, options) {
   addImage(slide, imageInfo.source, imagePosition, imageInfo.name);
 
   const cleanedPath = imageInfo.cleanedSource;
-  const hasCleanedImage = options.templateMode === "dual" && cleanedPath;
+  const hasCleanedImage = templateMode === "dual" && cleanedPath;
   if (hasCleanedImage) {
     addImage(slide, cleanedPath, imagePosition, `${imageInfo.name} text removed`);
   }
 
   for (const [index, box] of imageInfo.textBoxes.entries()) {
     const style = box.style ?? {};
-    if (options.templateMode === "mimic" || (options.templateMode === "dual" && !hasCleanedImage)) {
+    if (templateMode === "mimic" || (templateMode === "dual" && !hasCleanedImage)) {
       const maskBox = transformBox(box.mask ?? box, frame);
       const maskColor = color(style.backgroundColor, "FFFFFF");
       slide.addShape(pptx.ShapeType.rect, {
@@ -187,7 +217,7 @@ async function addRepairSlide(pptx, imageInfo, slideSize, options) {
     const textPosition = transformBox(box, frame);
     const textColor = options.useSampledStyle ? color(style.textColor, color(options.placeholderColor, "DC2626")) : color(options.placeholderColor, "DC2626");
     const guideColor = color(options.guideColor, "2563EB");
-    const text = resolvePlaceholder(box, options) || "□";
+    const text = effectivePlaceholder(box, imageInfo, options);
     const fontSize = fittedFontSize(style, box, textPosition, text, frame.scale);
     slide.addText(text, {
       ...pptPosition(textPosition),
@@ -201,8 +231,8 @@ async function addRepairSlide(pptx, imageInfo, slideSize, options) {
       fit: "shrink",
       breakLine: false,
       fill: { color: "FFFFFF", transparency: 100 },
-      line: options.guideWidth > 0
-        ? { color: guideColor, width: options.guideWidth }
+      line: guideWidth > 0
+        ? { color: guideColor, width: guideWidth }
         : { color: "FFFFFF", transparency: 100 },
       name: `03_text_${imageInfo.stem}_${box.id ?? `text_${index + 1}`}`,
     });
@@ -249,6 +279,15 @@ async function main() {
     referenceSlides,
   };
 
+  const guideFallbackCount = regions.images.filter((imageInfo) => {
+    return options.templateMode === "dual" && hasOcrSkipped(imageInfo);
+  }).length;
+  if (guideFallbackCount > 0) {
+    console.log(
+      `OCR guide fallback: ${guideFallbackCount} dense image(s) kept original text visible; use -OcrMode tesseract to force OCR.`
+    );
+  }
+
   const combinedSize = combinedSlideSize(regions.images);
   const combined = createPresentation(combinedSize);
   for (const imageInfo of regions.images) {
@@ -281,6 +320,8 @@ async function main() {
       width: image.width,
       height: image.height,
       textBoxes: image.textBoxes.length,
+      templateMode: effectiveTemplateMode(image, options),
+      ocrSkipped: image.ocrSkipped ?? null,
     })),
   };
   await fs.writeFile(path.join(outputDir, "ppt_summary.json"), `${JSON.stringify(summary, null, 2)}\n`);

@@ -40,6 +40,7 @@ param(
     [string]$OcrBoxPsm = "13,7",
     [int]$OcrScale = 3,
     [double]$OcrMinConfidence = 45.0,
+    [int]$OcrMaxBoxes = 60,
     [string]$FallbackGlyph = ([char]0x25A1),
 
     [ValidateSet("both", "embedded", "trace")]
@@ -87,6 +88,8 @@ Common modes:
 
 Useful only when tuning:
   -OcrMode off                   Disable OCR and use placeholders.
+  -OcrMode tesseract             Force OCR even on dense images.
+  -OcrMaxBoxes 60                Auto-skip OCR on dense images above this count.
   -LineGap 10 -VerticalGap 2     Merge nearby characters more aggressively.
   -LineSuppressionLength 40      Separate text from long box/arrow/table lines.
   -DebugPreview                  Save detected text-box previews.
@@ -452,6 +455,7 @@ function Invoke-PptWorkflow {
         OcrBoxPsm = $OcrBoxPsm
         OcrScale = $OcrScale
         OcrMinConfidence = $OcrMinConfidence
+        OcrMaxBoxes = $OcrMaxBoxes
         FallbackGlyph = $FallbackGlyph
         Magick = $Magick
     }
@@ -466,14 +470,21 @@ function Invoke-PptWorkflow {
         $params.NoSampledStyle = $true
     }
 
-    $workflowOutput = & $scriptPath @params 2>&1
+    $workflowOutput = New-Object System.Collections.Generic.List[string]
+    & $scriptPath @params 2>&1 | ForEach-Object {
+        $line = [string]$_
+        $workflowOutput.Add($line) | Out-Null
+        if ($OutputProfile -ne "simple" -or $line -match "^(OCR:|OCR |Processing |Warning:|ERROR:)" -or $line -match "text box\(es\)") {
+            Write-Host $line
+        }
+    }
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
-        $workflowOutput | ForEach-Object { Write-Host $_ }
+        if ($OutputProfile -eq "simple") {
+            Write-Host "Detailed log:"
+            $workflowOutput | ForEach-Object { Write-Host $_ }
+        }
         exit $exitCode
-    }
-    if ($OutputProfile -ne "simple") {
-        $workflowOutput | ForEach-Object { Write-Host $_ }
     }
 }
 
@@ -642,14 +653,21 @@ function Invoke-SvgWorkflow {
         $params.Magick = $Magick
     }
 
-    $workflowOutput = & $scriptPath @params 2>&1
+    $workflowOutput = New-Object System.Collections.Generic.List[string]
+    & $scriptPath @params 2>&1 | ForEach-Object {
+        $line = [string]$_
+        $workflowOutput.Add($line) | Out-Null
+        if ($OutputProfile -ne "simple" -or $line -match "^(Input:|Images:|== |embedded:|traced:|preview:|Warning:|ERROR:)") {
+            Write-Host $line
+        }
+    }
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
-        $workflowOutput | ForEach-Object { Write-Host $_ }
+        if ($OutputProfile -eq "simple") {
+            Write-Host "Detailed log:"
+            $workflowOutput | ForEach-Object { Write-Host $_ }
+        }
         exit $exitCode
-    }
-    if ($OutputProfile -ne "simple") {
-        $workflowOutput | ForEach-Object { Write-Host $_ }
     }
 }
 

@@ -72,6 +72,14 @@ text box with recognized text. Unrecognized characters are replaced by `□`, so
 the box keeps roughly the same visual footprint without filling the page with
 repeated `字` placeholders.
 
+Dense infographic-style images can contain many tiny labels, logos, and map
+marks. In `auto` OCR mode, the tool skips OCR when one image has more than 60
+detected text boxes, because that is usually faster and produces fewer bad text
+overlays. When this happens in the default `dual` template mode, the generated
+PowerPoint slide automatically keeps the original image visible and adds blue
+editable-box guides instead of covering text with a cleaned white base. Use
+`-OcrMode tesseract` to force OCR anyway.
+
 ### Recommended when you need to read the original words
 
 If the placeholder boxes cover the original words while you are comparing layers,

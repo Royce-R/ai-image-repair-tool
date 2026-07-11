@@ -26,6 +26,7 @@ param(
     [string]$OcrBoxPsm = "13,7",
     [int]$OcrScale = 3,
     [double]$OcrMinConfidence = 45.0,
+    [int]$OcrMaxBoxes = 60,
     [string]$FallbackGlyph = ([char]0x25A1),
     [string]$Magick = ""
 )
@@ -93,6 +94,7 @@ $detectorArgs = @(
     "--ocr-box-psm", $OcrBoxPsm,
     "--ocr-scale", $OcrScale,
     "--ocr-min-confidence", $OcrMinConfidence,
+    "--ocr-max-boxes", $OcrMaxBoxes,
     "--fallback-glyph", $FallbackGlyph
 )
 

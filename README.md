@@ -77,6 +77,8 @@
 
 在 PowerPoint 里打开“选择窗格”。隐藏 `02_cleaned_text_removed` 可以看到下方原图文字，显示它则回到干净底图上编辑。`03_text_001...` 是可编辑文本框，通常按从上到下的顺序排列。
 
+如果图片文字特别密集，默认会自动跳过逐框 OCR，并把可编辑页切到“保留原图 + 蓝色选框”的引导模式。这时不会生成覆盖文字的白色 cleaned 底图，避免打开后只看到一堆白框。需要强制识别文字时再加 `-OcrMode tesseract`。
+
 ## 常用参数
 
 - `-Input`：输入图片文件或图片文件夹。
@@ -95,6 +97,7 @@
 - `-AutoPlaceholder`：用长度更接近原文字段的占位符。
 - `-OcrStrategy box|image|both`：OCR 策略，默认 `box`，逐框识别更准但更慢。
 - `-OcrMode auto|off|tesseract`：OCR 开关，默认自动查找 Tesseract。
+- `-OcrMaxBoxes 60`：默认超过 60 个文本框时自动跳过 OCR，并保留原图文字作为底图；用 `-OcrMode tesseract` 可强制 OCR。
 - `-FallbackGlyph "□"`：识别失败时使用的占位字符。
 - `-SvgMode both|embedded|trace`：SVG 导出模式。
 - `-Magick "路径"`：手动指定 ImageMagick 的 `magick.exe`，适合没有加入 PATH 的环境。
