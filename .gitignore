@@ -9,6 +9,7 @@ svg_output/
 svg_output_*/
 output/
 output_*/
+results/
 tool_output/
 tool_output_*/
 tool_output_*.png

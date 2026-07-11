@@ -4,6 +4,20 @@
 
 ## 快速开始
 
+最简单的方式：
+
+1. 把图片或图片文件夹拖到 `RepairImage.cmd` 上。
+2. 等工具跑完。
+3. 打开自动弹出的结果文件夹，看 `START_HERE.txt`。
+
+也可以双击 `RepairImage.cmd`，它会处理默认的 `resource/` 文件夹。
+
+命令行用户可以这样用：
+
+```powershell
+.\ImageRepairTool.ps1 ".\resource\example.png"
+```
+
 查看内置帮助：
 
 ```powershell
@@ -16,23 +30,17 @@
 .\ImageRepairTool.ps1 -Check -Input ".\resource"
 ```
 
-转换单张图片：
-
-```powershell
-.\ImageRepairTool.ps1 -Input ".\resource\example.png"
-```
-
 转换一个文件夹：
 
 ```powershell
 .\ImageRepairTool.ps1 -Input ".\resource" -Output ".\output"
 ```
 
-完成后先打开：
+如果不指定 `-Output`，结果会自动放进 `results/时间_图片名/`。完成后先打开：
 
-- `output/START_HERE.txt`：告诉你应该先打开哪个文件。
-- 单图输入默认生成 `output/editable_template.pptx`。
-- 多图输入默认生成 `output/combined_editable_text_layer.pptx` 和 `output/editable_pptx/`。
+- `START_HERE.txt`：告诉你应该先打开哪个文件。
+- 单图输入默认生成 `editable_template.pptx`。
+- 多图输入默认生成 `combined_editable_text_layer.pptx` 和 `editable_pptx/`。
 
 ## 输出模式
 

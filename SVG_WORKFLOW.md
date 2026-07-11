@@ -5,7 +5,11 @@
 Use `ImageRepairTool.ps1` when you want a simple input/output interface.
 The input can be one image file or a folder of images.
 
+For the simplest Windows workflow, drag an image or folder onto `RepairImage.cmd`.
+If you double-click it without dragging anything, it processes `resource/`.
+
 ```powershell
+.\ImageRepairTool.ps1 ".\resource\example.png"
 .\ImageRepairTool.ps1 -Input .\resource -Output .\output
 ```
 
@@ -17,6 +21,7 @@ Common targets:
 .\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target both -SvgMode embedded
 ```
 
+If `-Output` is omitted, the tool writes to `results/<timestamp>_<input-name>/`.
 The default `simple` output profile writes final files and `START_HERE.txt`.
 Use `-OutputProfile debug` or `-OutputProfile full` to keep intermediate
 PowerPoint working files under `output/ppt/`.

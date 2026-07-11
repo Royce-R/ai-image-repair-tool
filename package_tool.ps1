@@ -22,6 +22,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "tools") | Out-
 
 $rootFiles = @(
     "ImageRepairTool.ps1",
+    "RepairImage.cmd",
     "convert_images_to_editable_ppt.ps1",
     "convert_images_to_svg.ps1",
     "SVG_WORKFLOW.md",

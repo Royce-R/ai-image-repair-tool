@@ -1,9 +1,10 @@
 param(
+    [Parameter(Position = 0)]
     [Alias("Input", "In", "InputDir")]
     [string]$Source = ".\resource",
 
     [Alias("Out", "OutputDir")]
-    [string]$Output = ".\output",
+    [string]$Output = "",
 
     [ValidateSet("simple", "debug", "full")]
     [string]$OutputProfile = "simple",
@@ -50,6 +51,7 @@ param(
     [int]$SvgMaxPathsPerColor = 4000,
 
     [string]$Magick = "",
+    [switch]$Open,
     [switch]$Help,
     [switch]$Check
 )
@@ -70,11 +72,14 @@ function Write-Usage {
 AI Image Repair Tool
 
 Simple use:
+  Drag an image or folder onto RepairImage.cmd
+  .\ImageRepairTool.ps1 "image.png"
   .\ImageRepairTool.ps1 -Input "image.png"
   .\ImageRepairTool.ps1 -Input ".\resource" -Output ".\output"
 
 Common modes:
   -Check                         Check dependencies only.
+  -Open                          Open the output folder when finished.
   -OutputProfile simple          Write only final files and START_HERE.txt. Default.
   -OutputProfile debug           Keep debug previews and intermediate files.
   -OutputProfile full            Keep every generated artifact.
@@ -362,10 +367,12 @@ function Resolve-ImageInput {
 
     $summary = Get-ImageInputSummary -Path $Path
     if ($summary.Kind -eq "Directory") {
+        $label = ConvertTo-SafePathName -Name (Split-Path -Leaf $summary.Path)
         return @{
             InputDir = $summary.Path
             TempDir = $null
             ImageCount = $summary.ImageCount
+            Label = $label
         }
     }
 
@@ -377,7 +384,29 @@ function Resolve-ImageInput {
         InputDir = $tempDir
         TempDir = $tempDir
         ImageCount = 1
+        Label = (ConvertTo-SafePathName -Name $sourceItem.BaseName)
     }
+}
+
+function ConvertTo-SafePathName {
+    param([string]$Name)
+
+    $safe = [regex]::Replace([string]$Name, '[<>:"/\\|?*\x00-\x1f]', "_").Trim(" ._")
+    if ([string]::IsNullOrWhiteSpace($safe)) {
+        return "images"
+    }
+    if ($safe.Length -gt 60) {
+        return $safe.Substring(0, 60)
+    }
+    return $safe
+}
+
+function New-DefaultOutputPath {
+    param([hashtable]$InputInfo)
+
+    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $label = ConvertTo-SafePathName -Name ([string]$InputInfo.Label)
+    return Join-Path $PSScriptRoot ("results\{0}_{1}" -f $stamp, $label)
 }
 
 function Invoke-PptWorkflow {
@@ -437,9 +466,14 @@ function Invoke-PptWorkflow {
         $params.NoSampledStyle = $true
     }
 
-    & $scriptPath @params
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    $workflowOutput = & $scriptPath @params 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $workflowOutput | ForEach-Object { Write-Host $_ }
+        exit $exitCode
+    }
+    if ($OutputProfile -ne "simple") {
+        $workflowOutput | ForEach-Object { Write-Host $_ }
     }
 }
 
@@ -608,9 +642,14 @@ function Invoke-SvgWorkflow {
         $params.Magick = $Magick
     }
 
-    & $scriptPath @params
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    $workflowOutput = & $scriptPath @params 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $workflowOutput | ForEach-Object { Write-Host $_ }
+        exit $exitCode
+    }
+    if ($OutputProfile -ne "simple") {
+        $workflowOutput | ForEach-Object { Write-Host $_ }
     }
 }
 
@@ -619,6 +658,9 @@ if ($Check) {
 }
 
 $inputInfo = Resolve-ImageInput -Path $Source
+if ([string]::IsNullOrWhiteSpace($Output)) {
+    $Output = New-DefaultOutputPath -InputInfo $inputInfo
+}
 $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $Output)
 $primaryFiles = @()
 $debugFiles = @()
@@ -654,6 +696,9 @@ try {
         Write-Host "Result: $path"
     }
     Write-Host "Done. Output root: $outputPath"
+    if ($Open) {
+        Start-Process -FilePath "explorer.exe" -ArgumentList "`"$outputPath`""
+    }
 }
 finally {
     if ($null -ne $inputInfo.TempDir -and (Test-Path $inputInfo.TempDir)) {
