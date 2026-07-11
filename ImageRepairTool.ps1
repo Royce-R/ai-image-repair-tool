@@ -12,6 +12,7 @@ param(
     [string]$TemplateMode = "dual",
 
     [switch]$ReferenceSlides,
+    [switch]$DebugPreview,
     [string]$Placeholder = "__AUTO__",
     [switch]$AutoPlaceholder,
     [switch]$NoSampledStyle,
@@ -393,6 +394,9 @@ function Invoke-PptWorkflow {
 
     if ($ReferenceSlides) {
         $params.ReferenceSlides = $true
+    }
+    if ($DebugPreview) {
+        $params.DebugPreview = $true
     }
     if ($NoSampledStyle) {
         $params.NoSampledStyle = $true

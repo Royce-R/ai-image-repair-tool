@@ -77,6 +77,17 @@ For each image this creates:
 This is usually the most practical setup even with OCR enabled: use OCR text as
 a starting point, then compare against the reference slide and fix mistakes.
 
+### Detection debug previews
+
+To inspect the detected boxes before editing in PowerPoint:
+
+```powershell
+.\convert_images_to_editable_ppt.ps1 -ReferenceSlides -DebugPreview
+```
+
+This writes `debug/*.detected_boxes.svg` beside the PPT output. Red boxes are
+editable text boxes, and blue dashed boxes show the cleaned mask regions.
+
 ### OCR controls
 
 The default OCR strategy is per-box recognition. It is slower than whole-image

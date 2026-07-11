@@ -10,7 +10,9 @@ the right places with text templates that are close enough for manual repair.
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
+import html
 import json
 import shutil
 import subprocess
@@ -21,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from raster_to_svg import IMAGE_EXTENSIONS, find_magick, identify_size, image_files, load_rgba
+from raster_to_svg import IMAGE_EXTENSIONS, find_magick, guess_mime, identify_size, image_files, load_rgba
 
 
 def dilate(mask: np.ndarray, radius_x: int, radius_y: int) -> np.ndarray:
@@ -903,6 +905,87 @@ def write_cleaned_image(
         raise RuntimeError(f"Failed to write cleaned image {target}: {stderr}") from exc
 
 
+def svg_number(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def write_debug_svg(
+    source: Path,
+    boxes: list[dict[str, object]],
+    target: Path,
+    *,
+    image_width: int,
+    image_height: int,
+) -> None:
+    data = source.read_bytes()
+    mime = guess_mime(source, data)
+    encoded = base64.b64encode(data).decode("ascii")
+    title = html.escape(f"{source.name} detected text boxes")
+    stroke_width = max(1.0, max(image_width, image_height) / 700.0)
+    label_size = max(10.0, min(24.0, image_height * 0.026))
+
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{image_width}" '
+            f'height="{image_height}" viewBox="0 0 {image_width} {image_height}" role="img">'
+        ),
+        f"  <title>{title}</title>",
+        "  <defs>",
+        "    <style><![CDATA[",
+        "      .edit-box { fill: #dc2626; fill-opacity: 0.08; stroke: #dc2626; }",
+        "      .mask-box { fill: none; stroke: #2563eb; stroke-dasharray: 8 5; }",
+        "      .label { fill: #dc2626; font-family: Arial, sans-serif; font-weight: 700; paint-order: stroke; stroke: white; stroke-width: 4px; }",
+        "    ]]></style>",
+        "  </defs>",
+        f'  <image width="{image_width}" height="{image_height}" href="data:{mime};base64,{encoded}" />',
+    ]
+
+    for index, box in enumerate(boxes, start=1):
+        left = svg_number(box.get("left"))
+        top = svg_number(box.get("top"))
+        width = svg_number(box.get("width"))
+        height = svg_number(box.get("height"))
+        box_id = html.escape(str(box.get("id") or f"text_{index:03d}"))
+        label_y = max(label_size + 2.0, float(box.get("top", 0.0)) - 3.0)
+        ocr_text = html.escape(str(box.get("ocrText") or ""))
+        title_text = f"{box_id}"
+        if ocr_text:
+            title_text += f": {ocr_text[:120]}"
+
+        lines.append(f'  <g id="{box_id}">')
+        lines.append(f"    <title>{title_text}</title>")
+
+        mask = box.get("mask")
+        if isinstance(mask, dict):
+            lines.append(
+                "    "
+                f'<rect class="mask-box" x="{svg_number(mask.get("left"))}" '
+                f'y="{svg_number(mask.get("top"))}" width="{svg_number(mask.get("width"))}" '
+                f'height="{svg_number(mask.get("height"))}" stroke-width="{svg_number(stroke_width)}" />'
+            )
+
+        lines.append(
+            "    "
+            f'<rect class="edit-box" x="{left}" y="{top}" width="{width}" height="{height}" '
+            f'stroke-width="{svg_number(stroke_width)}" />'
+        )
+        lines.append(
+            "    "
+            f'<text class="label" x="{left}" y="{svg_number(label_y)}" '
+            f'font-size="{svg_number(label_size)}">{index:02d}</text>'
+        )
+        lines.append("  </g>")
+
+    lines.append("</svg>")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def detect_boxes(
     rgba: np.ndarray,
     *,
@@ -1008,6 +1091,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ocr-scale", type=int, default=3)
     parser.add_argument("--ocr-min-confidence", type=float, default=45.0)
     parser.add_argument("--fallback-glyph", default="□")
+    parser.add_argument("--debug-dir", default=None)
     return parser.parse_args()
 
 
@@ -1018,6 +1102,9 @@ def main() -> int:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     cleaned_dir = Path(args.cleaned_dir).resolve() if args.cleaned_dir else output_json.parent / "cleaned"
     cleaned_dir.mkdir(parents=True, exist_ok=True)
+    debug_dir = Path(args.debug_dir).resolve() if args.debug_dir else None
+    if debug_dir is not None:
+        debug_dir.mkdir(parents=True, exist_ok=True)
     magick = find_magick(args.magick)
     tesseract = None if args.ocr_mode == "off" else find_tesseract(args.tesseract)
     if args.ocr_mode == "tesseract" and not tesseract:
@@ -1125,19 +1212,30 @@ def main() -> int:
             )
         cleaned_path = cleaned_dir / f"{source.stem}.text_removed.png"
         write_cleaned_image(magick, rgba, boxes, cleaned_path)
-        payload["images"].append(
-            {
-                "source": str(source),
-                "cleanedSource": str(cleaned_path),
-                "name": source.name,
-                "stem": source.stem,
-                "width": original_width,
-                "height": original_height,
-                "textBoxes": boxes,
-            }
-        )
+        image_payload = {
+            "source": str(source),
+            "cleanedSource": str(cleaned_path),
+            "name": source.name,
+            "stem": source.stem,
+            "width": original_width,
+            "height": original_height,
+            "textBoxes": boxes,
+        }
+        debug_path = None
+        if debug_dir is not None:
+            debug_path = debug_dir / f"{source.stem}.detected_boxes.svg"
+            write_debug_svg(
+                source,
+                boxes,
+                debug_path,
+                image_width=original_width,
+                image_height=original_height,
+            )
+            image_payload["debugSource"] = str(debug_path)
+        payload["images"].append(image_payload)
         ocr_count = sum(1 for box in boxes if box.get("ocrText"))
-        print(f"{source.name}: {len(boxes)} text box(es), ocr={ocr_count}, cleaned={cleaned_path.name}")
+        debug_note = f", debug={debug_path.name}" if debug_path is not None else ""
+        print(f"{source.name}: {len(boxes)} text box(es), ocr={ocr_count}, cleaned={cleaned_path.name}{debug_note}")
 
     output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print("Finished text-region detection.")

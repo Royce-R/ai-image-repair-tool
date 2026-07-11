@@ -22,6 +22,12 @@ New-Item -ItemType Directory -Force .\resource
 .\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides
 ```
 
+如果要检查文字框检测是否准确，可以额外生成带框预览：
+
+```powershell
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides -DebugPreview
+```
+
 处理单张图片：
 
 ```powershell
@@ -45,6 +51,7 @@ New-Item -ItemType Directory -Force .\resource
 - `output/ppt/combined_editable_text_layer.pptx`：包含所有图片的总 PPT。
 - `output/ppt/per_image/*.pptx`：每张图片一个单独 PPT。
 - `output/ppt/cleaned/*.text_removed.png`：扣掉检测文字后的底图。
+- `output/ppt/debug/*.detected_boxes.svg`：开启 `-DebugPreview` 后生成的检测框预览。
 - `output/svg/embedded/*.svg`：视觉保持最准确的嵌入式 SVG。
 - `output/svg/traced/*.svg`：启用描摹时生成的近似矢量 SVG。
 
@@ -64,6 +71,7 @@ New-Item -ItemType Directory -Force .\resource
 - `-Target ppt|svg|both`：选择导出 PPT、SVG 或两者都导出。
 - `-Check`：只检查输入和依赖，不执行转换。
 - `-ReferenceSlides`：为每张图额外生成原图参考页，推荐开启。
+- `-DebugPreview`：生成带检测框的 SVG 预览，方便调参和排查误检。
 - `-TemplateMode dual|mimic|guide`：PPT 模板模式，默认 `dual`。
 - `-Placeholder "文字"`：设置文本框占位文字。
 - `-AutoPlaceholder`：用长度更接近原文字段的占位符。

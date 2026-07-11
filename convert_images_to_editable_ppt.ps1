@@ -14,6 +14,7 @@ param(
     [string]$FontFace = "Microsoft YaHei",
     [switch]$NoSampledStyle,
     [switch]$ReferenceSlides,
+    [switch]$DebugPreview,
     [ValidateSet("auto", "off", "tesseract")]
     [string]$OcrMode = "auto",
     [ValidateSet("box", "image", "both")]
@@ -65,6 +66,7 @@ if ($null -eq $env:HOME -or $env:HOME -eq "") {
 }
 $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $OutputDir)
 $regionsJson = Join-Path $outputPath "text_regions.json"
+$debugDir = Join-Path $outputPath "debug"
 $detector = Join-Path $PSScriptRoot "tools\detect_text_regions.py"
 $builder = Join-Path $PSScriptRoot "tools\create_editable_text_pptx.mjs"
 $layerNamer = Join-Path $PSScriptRoot "tools\name_pptx_layers.py"
@@ -97,6 +99,9 @@ if ($Tesseract -ne "") {
 }
 if ($Magick -ne "") {
     $detectorArgs += @("--magick", $Magick)
+}
+if ($DebugPreview) {
+    $detectorArgs += @("--debug-dir", $debugDir)
 }
 
 & $python @detectorArgs
