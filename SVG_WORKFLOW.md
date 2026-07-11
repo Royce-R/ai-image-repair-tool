@@ -6,19 +6,20 @@ Use `ImageRepairTool.ps1` when you want a simple input/output interface.
 The input can be one image file or a folder of images.
 
 ```powershell
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output
 ```
 
 Common targets:
 
 ```powershell
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output
 .\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target svg -SvgMode embedded
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target both -ReferenceSlides -SvgMode embedded
+.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target both -SvgMode embedded
 ```
 
-The tool writes PowerPoint files under `output/ppt/` and SVG files under
-`output/svg/`.
+The default `simple` output profile writes final files and `START_HERE.txt`.
+Use `-OutputProfile debug` or `-OutputProfile full` to keep intermediate
+PowerPoint working files under `output/ppt/`.
 
 To create a distributable zip:
 
@@ -28,7 +29,13 @@ To create a distributable zip:
 
 ## Best option for PowerPoint repair
 
-For manual PowerPoint editing, use the editable PPTX workflow:
+For manual PowerPoint editing, use the main entry point:
+
+```powershell
+.\ImageRepairTool.ps1 -Input .\resource
+```
+
+For low-level testing, use the editable PPTX workflow directly:
 
 ```powershell
 .\convert_images_to_editable_ppt.ps1

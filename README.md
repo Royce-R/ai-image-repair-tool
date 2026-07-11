@@ -4,54 +4,59 @@
 
 ## 快速开始
 
-先创建输入目录，并把你有权使用的图片放进去：
+查看内置帮助：
 
 ```powershell
-New-Item -ItemType Directory -Force .\resource
+.\ImageRepairTool.ps1 -Help
 ```
 
 检查当前环境是否能运行：
 
 ```powershell
-.\ImageRepairTool.ps1 -Check -Input .\resource -Target both
+.\ImageRepairTool.ps1 -Check -Input ".\resource"
 ```
 
-生成可编辑 PowerPoint 模板：
+转换单张图片：
 
 ```powershell
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides
+.\ImageRepairTool.ps1 -Input ".\resource\example.png"
 ```
 
-如果要检查文字框检测是否准确，可以额外生成带框预览：
+转换一个文件夹：
 
 ```powershell
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target ppt -ReferenceSlides -DebugPreview
+.\ImageRepairTool.ps1 -Input ".\resource" -Output ".\output"
 ```
 
-处理单张图片：
+完成后先打开：
+
+- `output/START_HERE.txt`：告诉你应该先打开哪个文件。
+- 单图输入默认生成 `output/editable_template.pptx`。
+- 多图输入默认生成 `output/combined_editable_text_layer.pptx` 和 `output/editable_pptx/`。
+
+## 输出模式
+
+默认使用 `-OutputProfile simple`，只留下最终文件和 `START_HERE.txt`。
+
+需要检查文字框检测是否准确时：
 
 ```powershell
-.\ImageRepairTool.ps1 -Input .\resource\example.png -Output .\output -Target ppt -ReferenceSlides
+.\ImageRepairTool.ps1 -Input ".\resource\example.png" -Output ".\output_debug" -OutputProfile debug
 ```
 
-只导出 SVG：
+需要保留全部中间文件时：
 
 ```powershell
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target svg -SvgMode embedded
-```
-
-同时导出 PPT 和 SVG：
-
-```powershell
-.\ImageRepairTool.ps1 -Input .\resource -Output .\output -Target both -ReferenceSlides -SvgMode embedded
+.\ImageRepairTool.ps1 -Input ".\resource" -Output ".\output_full" -OutputProfile full
 ```
 
 ## 输出目录
 
-- `output/ppt/combined_editable_text_layer.pptx`：包含所有图片的总 PPT。
-- `output/ppt/per_image/*.pptx`：每张图片一个单独 PPT。
-- `output/ppt/cleaned/*.text_removed.png`：扣掉检测文字后的底图。
-- `output/ppt/debug/*.detected_boxes.svg`：开启 `-DebugPreview` 后生成的检测框预览。
+- `output/START_HERE.txt`：最先打开。
+- `output/editable_template.pptx`：单图输入时的默认结果。
+- `output/combined_editable_text_layer.pptx`：多图输入时的总 PPT。
+- `output/editable_pptx/*.pptx`：多图输入时每张图一个 PPT。
+- `output/ppt/...`：`debug` 或 `full` 模式下保留的完整工作文件。
 - `output/svg/embedded/*.svg`：视觉保持最准确的嵌入式 SVG。
 - `output/svg/traced/*.svg`：启用描摹时生成的近似矢量 SVG。
 
@@ -68,10 +73,15 @@ New-Item -ItemType Directory -Force .\resource
 
 - `-Input`：输入图片文件或图片文件夹。
 - `-Output`：输出目录，默认 `.\output`。
+- `-OutputProfile simple|debug|full`：控制输出多少，默认 `simple`。
 - `-Target ppt|svg|both`：选择导出 PPT、SVG 或两者都导出。
 - `-Check`：只检查输入和依赖，不执行转换。
-- `-ReferenceSlides`：为每张图额外生成原图参考页，推荐开启。
-- `-DebugPreview`：生成带检测框的 SVG 预览，方便调参和排查误检。
+- `-Help`：显示最短使用说明。
+
+调参时再看这些：
+
+- `-ReferenceSlides`：为每张图额外生成原图参考页。
+- `-DebugPreview`：生成带检测框的 SVG 预览。
 - `-TemplateMode dual|mimic|guide`：PPT 模板模式，默认 `dual`。
 - `-Placeholder "文字"`：设置文本框占位文字。
 - `-AutoPlaceholder`：用长度更接近原文字段的占位符。

@@ -5,6 +5,9 @@ param(
     [Alias("Out", "OutputDir")]
     [string]$Output = ".\output",
 
+    [ValidateSet("simple", "debug", "full")]
+    [string]$OutputProfile = "simple",
+
     [ValidateSet("ppt", "svg", "both")]
     [string]$Target = "ppt",
 
@@ -47,10 +50,12 @@ param(
     [int]$SvgMaxPathsPerColor = 4000,
 
     [string]$Magick = "",
+    [switch]$Help,
     [switch]$Check
 )
 
 $ErrorActionPreference = "Stop"
+$script:EffectiveDebugPreview = $DebugPreview -or ($OutputProfile -in @("debug", "full"))
 
 $ImageExtensions = @(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
 $MagickCandidates = @(
@@ -59,6 +64,34 @@ $MagickCandidates = @(
     "C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe",
     "C:\Program Files\ImageMagick-7.1.0-Q16-HDRI\magick.exe"
 )
+
+function Write-Usage {
+    Write-Host @"
+AI Image Repair Tool
+
+Simple use:
+  .\ImageRepairTool.ps1 -Input "image.png"
+  .\ImageRepairTool.ps1 -Input ".\resource" -Output ".\output"
+
+Common modes:
+  -Check                         Check dependencies only.
+  -OutputProfile simple          Write only final files and START_HERE.txt. Default.
+  -OutputProfile debug           Keep debug previews and intermediate files.
+  -OutputProfile full            Keep every generated artifact.
+  -Target ppt|svg|both           Generate editable PPTX, SVG, or both.
+
+Useful only when tuning:
+  -OcrMode off                   Disable OCR and use placeholders.
+  -LineGap 10 -VerticalGap 2     Merge nearby characters more aggressively.
+  -LineSuppressionLength 40      Separate text from long box/arrow/table lines.
+  -DebugPreview                  Save detected text-box previews.
+"@
+}
+
+if ($Help) {
+    Write-Usage
+    exit 0
+}
 
 function Get-InputImageFiles {
     param([string]$InputDir)
@@ -397,7 +430,7 @@ function Invoke-PptWorkflow {
     if ($ReferenceSlides) {
         $params.ReferenceSlides = $true
     }
-    if ($DebugPreview) {
+    if ($script:EffectiveDebugPreview) {
         $params.DebugPreview = $true
     }
     if ($NoSampledStyle) {
@@ -408,6 +441,144 @@ function Invoke-PptWorkflow {
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
+}
+
+function Assert-ChildPath {
+    param(
+        [string]$Parent,
+        [string]$Child
+    )
+
+    $parentPath = (Resolve-Path -LiteralPath $Parent).Path
+    $childPath = (Resolve-Path -LiteralPath $Child).Path
+    if ($childPath -eq $parentPath) {
+        throw "Refusing to treat root path as child: $childPath"
+    }
+    if (-not $childPath.StartsWith($parentPath + [System.IO.Path]::DirectorySeparatorChar)) {
+        throw "Path is outside expected output root: $childPath"
+    }
+}
+
+function Copy-ResultFile {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    $parent = Split-Path -Parent $Destination
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    return (Resolve-Path -LiteralPath $Destination).Path
+}
+
+function Publish-PptResults {
+    param(
+        [string]$PptOutput,
+        [string]$OutputRoot,
+        [hashtable]$InputInfo
+    )
+
+    $primaryFiles = @()
+    $debugFiles = @()
+    $combined = Join-Path $PptOutput "combined_editable_text_layer.pptx"
+    $perImageDir = Join-Path $PptOutput "per_image"
+
+    if ($OutputProfile -eq "simple") {
+        if ($InputInfo.ImageCount -eq 1 -and (Test-Path $perImageDir)) {
+            $single = @(Get-ChildItem -LiteralPath $perImageDir -Filter "*.pptx" -File | Sort-Object Name | Select-Object -First 1)
+            if ($single.Count -gt 0) {
+                $primaryFiles += Copy-ResultFile -Source $single[0].FullName -Destination (Join-Path $OutputRoot "editable_template.pptx")
+            }
+        }
+        elseif (Test-Path $combined) {
+            $primaryFiles += Copy-ResultFile -Source $combined -Destination (Join-Path $OutputRoot "combined_editable_text_layer.pptx")
+            if (Test-Path $perImageDir) {
+                $editableDir = Join-Path $OutputRoot "editable_pptx"
+                New-Item -ItemType Directory -Force -Path $editableDir | Out-Null
+                Get-ChildItem -LiteralPath $perImageDir -Filter "*.pptx" -File |
+                    Sort-Object Name |
+                    ForEach-Object {
+                        $primaryFiles += Copy-ResultFile -Source $_.FullName -Destination (Join-Path $editableDir $_.Name)
+                    }
+            }
+        }
+
+        $debugDir = Join-Path $PptOutput "debug"
+        if ($script:EffectiveDebugPreview -and (Test-Path $debugDir)) {
+            $reviewDir = Join-Path $OutputRoot "review"
+            New-Item -ItemType Directory -Force -Path $reviewDir | Out-Null
+            Get-ChildItem -LiteralPath $debugDir -File |
+                Sort-Object Name |
+                ForEach-Object {
+                    $debugFiles += Copy-ResultFile -Source $_.FullName -Destination (Join-Path $reviewDir $_.Name)
+                }
+        }
+
+        Assert-ChildPath -Parent $OutputRoot -Child $PptOutput
+        Remove-Item -LiteralPath $PptOutput -Recurse -Force
+    }
+    else {
+        if (Test-Path $combined) {
+            $primaryFiles += (Resolve-Path -LiteralPath $combined).Path
+        }
+        if (Test-Path $perImageDir) {
+            $primaryFiles += @(Get-ChildItem -LiteralPath $perImageDir -Filter "*.pptx" -File | Sort-Object Name | ForEach-Object { $_.FullName })
+        }
+        $debugDir = Join-Path $PptOutput "debug"
+        if (Test-Path $debugDir) {
+            $debugFiles += @(Get-ChildItem -LiteralPath $debugDir -File | Sort-Object Name | ForEach-Object { $_.FullName })
+        }
+    }
+
+    return @{
+        PrimaryFiles = $primaryFiles
+        DebugFiles = $debugFiles
+    }
+}
+
+function Write-StartHere {
+    param(
+        [string]$OutputRoot,
+        [array]$PrimaryFiles,
+        [array]$DebugFiles,
+        [array]$SvgPaths
+    )
+
+    $lines = @(
+        "AI Image Repair Tool results",
+        "",
+        "Open these first:"
+    )
+
+    if ($PrimaryFiles.Count -eq 0 -and $SvgPaths.Count -eq 0) {
+        $lines += "  No final files were recorded. Check the console output above."
+    }
+    foreach ($file in $PrimaryFiles) {
+        $lines += "  $file"
+    }
+    foreach ($path in $SvgPaths) {
+        $lines += "  $path"
+    }
+
+    if ($DebugFiles.Count -gt 0) {
+        $lines += ""
+        $lines += "Debug previews:"
+        foreach ($file in $DebugFiles) {
+            $lines += "  $file"
+        }
+    }
+
+    $lines += ""
+    $lines += "Profiles:"
+    $lines += "  simple: final files only. Default."
+    $lines += "  debug: keep detection previews and intermediate files."
+    $lines += "  full: keep every generated artifact."
+    $lines += ""
+    $lines += "Run .\ImageRepairTool.ps1 -Help for examples."
+
+    $startHere = Join-Path $OutputRoot "START_HERE.txt"
+    Set-Content -LiteralPath $startHere -Value $lines -Encoding UTF8
+    return (Resolve-Path -LiteralPath $startHere).Path
 }
 
 function Invoke-SvgWorkflow {
@@ -449,6 +620,9 @@ if ($Check) {
 
 $inputInfo = Resolve-ImageInput -Path $Source
 $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $Output)
+$primaryFiles = @()
+$debugFiles = @()
+$svgPaths = @()
 
 try {
     if ($Target -eq "ppt" -or $Target -eq "both") {
@@ -456,7 +630,10 @@ try {
         New-Item -ItemType Directory -Force -Path $pptOutput | Out-Null
         Write-Host "Creating editable PowerPoint output..."
         Invoke-PptWorkflow -InputDir $inputInfo.InputDir -OutputDir $pptOutput
-        Write-Host "PPT output: $pptOutput"
+        $pptResults = Publish-PptResults -PptOutput $pptOutput -OutputRoot $outputPath -InputInfo $inputInfo
+        $primaryFiles += $pptResults.PrimaryFiles
+        $debugFiles += $pptResults.DebugFiles
+        Write-Host "PPT output ready."
     }
 
     if ($Target -eq "svg" -or $Target -eq "both") {
@@ -464,9 +641,18 @@ try {
         New-Item -ItemType Directory -Force -Path $svgOutput | Out-Null
         Write-Host "Creating SVG output..."
         Invoke-SvgWorkflow -InputDir $inputInfo.InputDir -OutputDir $svgOutput
+        $svgPaths += (Resolve-Path -LiteralPath $svgOutput).Path
         Write-Host "SVG output: $svgOutput"
     }
 
+    $startHere = Write-StartHere -OutputRoot $outputPath -PrimaryFiles $primaryFiles -DebugFiles $debugFiles -SvgPaths $svgPaths
+    Write-Host "Start here: $startHere"
+    foreach ($file in $primaryFiles) {
+        Write-Host "Result: $file"
+    }
+    foreach ($path in $svgPaths) {
+        Write-Host "Result: $path"
+    }
     Write-Host "Done. Output root: $outputPath"
 }
 finally {
