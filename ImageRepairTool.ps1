@@ -352,8 +352,15 @@ function Invoke-PreflightCheck {
     }
 
     try {
-        $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $Output)
-        Write-CheckLine -Status "OK" -Name "Output" -Detail "Writable output root: $outputPath"
+        if ([string]::IsNullOrWhiteSpace($Output)) {
+            $defaultResultsRoot = Join-Path $PSScriptRoot "results"
+            $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $defaultResultsRoot)
+            Write-CheckLine -Status "OK" -Name "Output" -Detail "Writable default output root: $outputPath (auto-assigned per run)"
+        }
+        else {
+            $outputPath = Resolve-Path -Path (New-Item -ItemType Directory -Force -Path $Output)
+            Write-CheckLine -Status "OK" -Name "Output" -Detail "Writable output root: $outputPath"
+        }
     }
     catch {
         $failures += 1
